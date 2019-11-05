@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-
 import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -310,10 +309,8 @@ public abstract class CommonFSUtils {
       }
       return root;
     } catch (URISyntaxException e) {
-      IOException io = new IOException("Root directory path is not a valid " +
-        "URI -- check your " + HConstants.HBASE_DIR + " configuration");
-      io.initCause(e);
-      throw io;
+      throw new IOException("Root directory path is not a valid " +
+        "URI -- check your " + HConstants.HBASE_DIR + " configuration", e);
     }
   }
 
@@ -338,7 +335,7 @@ public abstract class CommonFSUtils {
   }
 
   /**
-   * Return the 'path' component of a Path.  In Hadoop, Path is an URI.  This
+   * Return the 'path' component of a Path.  In Hadoop, Path is a URI.  This
    * method returns the 'path' component of a Path's URI: e.g. If a Path is
    * <code>hdfs://example.org:9000/hbase_trunk/TestTable/compaction.dir</code>,
    * this method returns <code>/hbase_trunk/TestTable/compaction.dir</code>.
@@ -418,6 +415,46 @@ public abstract class CommonFSUtils {
       }
     }
     return true;
+  }
+
+  /**
+   * Returns the WAL region directory based on the given table name and region name
+   * @param conf configuration to determine WALRootDir
+   * @param tableName Table that the region is under
+   * @param encodedRegionName Region name used for creating the final region directory
+   * @return the region directory used to store WALs under the WALRootDir
+   * @throws IOException if there is an exception determining the WALRootDir
+   */
+  public static Path getWALRegionDir(final Configuration conf, final TableName tableName,
+      final String encodedRegionName) throws IOException {
+    return new Path(getWALTableDir(conf, tableName), encodedRegionName);
+  }
+
+  /**
+   * Returns the Table directory under the WALRootDir for the specified table name
+   * @param conf configuration used to get the WALRootDir
+   * @param tableName Table to get the directory for
+   * @return a path to the WAL table directory for the specified table
+   * @throws IOException if there is an exception determining the WALRootDir
+   */
+  public static Path getWALTableDir(final Configuration conf, final TableName tableName)
+      throws IOException {
+    Path baseDir = new Path(getWALRootDir(conf), HConstants.BASE_NAMESPACE_DIR);
+    return new Path(new Path(baseDir, tableName.getNamespaceAsString()),
+      tableName.getQualifierAsString());
+  }
+
+  /**
+   * For backward compatibility with HBASE-20734, where we store recovered edits in a wrong
+   * directory without BASE_NAMESPACE_DIR. See HBASE-22617 for more details.
+   * @deprecated For compatibility, will be removed in 4.0.0.
+   */
+  @Deprecated
+  public static Path getWrongWALRegionDir(final Configuration conf, final TableName tableName,
+      final String encodedRegionName) throws IOException {
+    Path wrongTableDir = new Path(new Path(getWALRootDir(conf), tableName.getNamespaceAsString()),
+      tableName.getQualifierAsString());
+    return new Path(wrongTableDir, encodedRegionName);
   }
 
   /**
@@ -1030,5 +1067,4 @@ public abstract class CommonFSUtils {
       super(message);
     }
   }
-
 }

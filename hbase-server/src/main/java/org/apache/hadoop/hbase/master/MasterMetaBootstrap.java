@@ -65,8 +65,7 @@ class MasterMetaBootstrap {
       throw new IllegalStateException("hbase:meta must be initialized first before we can " +
           "assign out its replicas");
     }
-    ServerName metaServername =
-        this.master.getMetaTableLocator().getMetaRegionLocation(this.master.getZooKeeper());
+    ServerName metaServername = MetaTableLocator.getMetaRegionLocation(this.master.getZooKeeper());
     for (int i = 1; i < numReplicas; i++) {
       // Get current meta state for replica from zk.
       RegionState metaState = MetaTableLocator.getMetaRegionState(master.getZooKeeper(), i);
@@ -102,7 +101,7 @@ class MasterMetaBootstrap {
           RegionState r = MetaTableLocator.getMetaRegionState(zooKeeper, replicaId);
           LOG.info("Closing excess replica of meta region " + r.getRegion());
           // send a close and wait for a max of 30 seconds
-          ServerManager.closeRegionSilentlyAndWait(master.getClusterConnection(),
+          ServerManager.closeRegionSilentlyAndWait(master.getAsyncClusterConnection(),
               r.getServerName(), r.getRegion(), 30000);
           ZKUtil.deleteNode(zooKeeper, zooKeeper.getZNodePaths().getZNodeForReplica(replicaId));
         }

@@ -41,7 +41,7 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
-import org.apache.hadoop.hbase.client.ClusterConnection;
+import org.apache.hadoop.hbase.client.AsyncClusterConnection;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.replication.ReplicationException;
@@ -55,7 +55,6 @@ import org.apache.hadoop.hbase.replication.master.ReplicationHFileCleaner;
 import org.apache.hadoop.hbase.testclassification.MasterTests;
 import org.apache.hadoop.hbase.testclassification.SmallTests;
 import org.apache.hadoop.hbase.util.Pair;
-import org.apache.hadoop.hbase.zookeeper.MetaTableLocator;
 import org.apache.hadoop.hbase.zookeeper.RecoverableZooKeeper;
 import org.apache.hadoop.hbase.zookeeper.ZKWatcher;
 import org.apache.zookeeper.KeeperException;
@@ -252,12 +251,7 @@ public class TestReplicationHFileCleaner {
     }
 
     @Override
-    public ClusterConnection getConnection() {
-      return null;
-    }
-
-    @Override
-    public MetaTableLocator getMetaTableLocator() {
+    public Connection getConnection() {
       return null;
     }
 
@@ -290,12 +284,6 @@ public class TestReplicationHFileCleaner {
     }
 
     @Override
-    public ClusterConnection getClusterConnection() {
-      // TODO Auto-generated method stub
-      return null;
-    }
-
-    @Override
     public FileSystem getFileSystem() {
       return null;
     }
@@ -307,6 +295,11 @@ public class TestReplicationHFileCleaner {
 
     @Override
     public Connection createConnection(Configuration conf) throws IOException {
+      return null;
+    }
+
+    @Override
+    public AsyncClusterConnection getAsyncClusterConnection() {
       return null;
     }
   }

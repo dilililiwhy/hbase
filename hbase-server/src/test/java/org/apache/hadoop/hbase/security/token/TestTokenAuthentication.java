@@ -44,7 +44,7 @@ import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
-import org.apache.hadoop.hbase.client.ClusterConnection;
+import org.apache.hadoop.hbase.client.AsyncClusterConnection;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.coprocessor.HasRegionServerServices;
@@ -70,7 +70,6 @@ import org.apache.hadoop.hbase.util.Sleeper;
 import org.apache.hadoop.hbase.util.Strings;
 import org.apache.hadoop.hbase.util.Threads;
 import org.apache.hadoop.hbase.util.Writables;
-import org.apache.hadoop.hbase.zookeeper.MetaTableLocator;
 import org.apache.hadoop.hbase.zookeeper.ZKClusterId;
 import org.apache.hadoop.hbase.zookeeper.ZKWatcher;
 import org.apache.hadoop.net.DNS;
@@ -211,12 +210,7 @@ public class TestTokenAuthentication {
     }
 
     @Override
-    public ClusterConnection getConnection() {
-      return null;
-    }
-
-    @Override
-    public MetaTableLocator getMetaTableLocator() {
+    public Connection getConnection() {
       return null;
     }
 
@@ -360,13 +354,12 @@ public class TestTokenAuthentication {
     }
 
     @Override
-    public ClusterConnection getClusterConnection() {
-      // TODO Auto-generated method stub
+    public Connection createConnection(Configuration conf) throws IOException {
       return null;
     }
 
     @Override
-    public Connection createConnection(Configuration conf) throws IOException {
+    public AsyncClusterConnection getAsyncClusterConnection() {
       return null;
     }
   }

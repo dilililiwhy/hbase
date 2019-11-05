@@ -18,23 +18,31 @@
 package org.apache.hadoop.hbase.master.procedure;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
+
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.master.assignment.RegionStateNode;
 import org.apache.hadoop.hbase.master.assignment.TransitRegionStateProcedure;
 import org.apache.hadoop.hbase.procedure2.ProcedureStateSerializer;
 import org.apache.hadoop.hbase.procedure2.ProcedureSuspendedException;
+import org.apache.hadoop.hbase.procedure2.ProcedureUtil;
 import org.apache.hadoop.hbase.procedure2.ProcedureYieldException;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.RetryCounter;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.hbase.thirdparty.org.apache.commons.collections4.CollectionUtils;
+
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ReopenTableRegionsState;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ReopenTableRegionsStateData;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos;
 
 /**
  * Used for reopening the regions for a table.
@@ -47,13 +55,27 @@ public class ReopenTableRegionsProcedure
 
   private TableName tableName;
 
+  // Specify specific regions of a table to reopen.
+  // if specified null, all regions of the table will be reopened.
+  private final List<byte[]> regionNames;
+
   private List<HRegionLocation> regions = Collections.emptyList();
 
+  private RetryCounter retryCounter;
+
   public ReopenTableRegionsProcedure() {
+    regionNames = null;
   }
 
   public ReopenTableRegionsProcedure(TableName tableName) {
     this.tableName = tableName;
+    this.regionNames = null;
+  }
+
+  public ReopenTableRegionsProcedure(final TableName tableName,
+      final List<byte[]> regionNames) {
+    this.tableName = tableName;
+    this.regionNames = regionNames;
   }
 
   @Override
@@ -66,23 +88,40 @@ public class ReopenTableRegionsProcedure
     return TableOperationType.REGION_EDIT;
   }
 
+  private boolean canSchedule(MasterProcedureEnv env, HRegionLocation loc) {
+    if (loc.getSeqNum() < 0) {
+      return false;
+    }
+    RegionStateNode regionNode =
+      env.getAssignmentManager().getRegionStates().getRegionStateNode(loc.getRegion());
+    // If the region node is null, then at least in the next round we can remove this region to make
+    // progress. And the second condition is a normal one, if there are no TRSP with it then we can
+    // schedule one to make progress.
+    return regionNode == null || !regionNode.isInTransition();
+  }
+
   @Override
   protected Flow executeFromState(MasterProcedureEnv env, ReopenTableRegionsState state)
       throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
     switch (state) {
       case REOPEN_TABLE_REGIONS_GET_REGIONS:
         if (!env.getAssignmentManager().isTableEnabled(tableName)) {
-          LOG.info("Table {} is disabled, give up reopening its regions");
+          LOG.info("Table {} is disabled, give up reopening its regions", tableName);
           return Flow.NO_MORE_STATE;
         }
-        regions =
-          env.getAssignmentManager().getRegionStates().getRegionsOfTableForReopen(tableName);
+        List<HRegionLocation> tableRegions = env.getAssignmentManager()
+          .getRegionStates().getRegionsOfTableForReopen(tableName);
+        regions = getRegionLocationsForReopen(tableRegions);
         setNextState(ReopenTableRegionsState.REOPEN_TABLE_REGIONS_REOPEN_REGIONS);
         return Flow.HAS_MORE_STATE;
       case REOPEN_TABLE_REGIONS_REOPEN_REGIONS:
         for (HRegionLocation loc : regions) {
-          RegionStateNode regionNode = env.getAssignmentManager().getRegionStates()
-            .getOrCreateRegionStateNode(loc.getRegion());
+          RegionStateNode regionNode =
+            env.getAssignmentManager().getRegionStates().getRegionStateNode(loc.getRegion());
+          // this possible, maybe the region has already been merged or split, see HBASE-20921
+          if (regionNode == null) {
+            continue;
+          }
           TransitRegionStateProcedure proc;
           regionNode.lock();
           try {
@@ -104,22 +143,58 @@ public class ReopenTableRegionsProcedure
         if (regions.isEmpty()) {
           return Flow.NO_MORE_STATE;
         }
-        if (regions.stream().anyMatch(l -> l.getSeqNum() >= 0)) {
+        if (regions.stream().anyMatch(loc -> canSchedule(env, loc))) {
+          retryCounter = null;
           setNextState(ReopenTableRegionsState.REOPEN_TABLE_REGIONS_REOPEN_REGIONS);
           return Flow.HAS_MORE_STATE;
         }
-        LOG.info("There are still {} region(s) which need to be reopened for table {} are in " +
-          "OPENING state, try again later", regions.size(), tableName);
-        // All the regions need to reopen are in OPENING state which means we can not schedule any
-        // MRPs. Then sleep for one second, and yield the procedure to let other procedures run
-        // first and hope next time we can get some regions in other state to make progress.
-        // TODO: add a delay for ProcedureYieldException so that we do not need to sleep here which
-        // blocks a procedure worker.
-        Thread.sleep(1000);
-        throw new ProcedureYieldException();
+        // We can not schedule TRSP for all the regions need to reopen, wait for a while and retry
+        // again.
+        if (retryCounter == null) {
+          retryCounter = ProcedureUtil.createRetryCounter(env.getMasterConfiguration());
+        }
+        long backoff = retryCounter.getBackoffTimeAndIncrementAttempts();
+        LOG.info(
+          "There are still {} region(s) which need to be reopened for table {} are in " +
+            "OPENING state, suspend {}secs and try again later",
+          regions.size(), tableName, backoff / 1000);
+        setTimeout(Math.toIntExact(backoff));
+        setState(ProcedureProtos.ProcedureState.WAITING_TIMEOUT);
+        skipPersistence();
+        throw new ProcedureSuspendedException();
       default:
         throw new UnsupportedOperationException("unhandled state=" + state);
     }
+  }
+
+  private List<HRegionLocation> getRegionLocationsForReopen(
+      List<HRegionLocation> tableRegionsForReopen) {
+
+    List<HRegionLocation> regionsToReopen = new ArrayList<>();
+    if (CollectionUtils.isNotEmpty(regionNames) &&
+      CollectionUtils.isNotEmpty(tableRegionsForReopen)) {
+      for (byte[] regionName : regionNames) {
+        for (HRegionLocation hRegionLocation : tableRegionsForReopen) {
+          if (Bytes.equals(regionName, hRegionLocation.getRegion().getRegionName())) {
+            regionsToReopen.add(hRegionLocation);
+            break;
+          }
+        }
+      }
+    } else {
+      regionsToReopen = tableRegionsForReopen;
+    }
+    return regionsToReopen;
+  }
+
+  /**
+   * At end of timeout, wake ourselves up so we run again.
+   */
+  @Override
+  protected synchronized boolean setTimeoutFailure(MasterProcedureEnv env) {
+    setState(ProcedureProtos.ProcedureState.RUNNABLE);
+    env.getProcedureScheduler().addFront(this);
+    return false; // 'false' means that this procedure handled the timeout
   }
 
   @Override

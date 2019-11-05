@@ -53,7 +53,6 @@ import org.apache.hbase.thirdparty.com.google.common.io.Closeables;
 
 @Category({ ZKTests.class, MediumTests.class })
 public class TestZKUtil {
-
   @ClassRule
   public static final HBaseClassTestRule CLASS_RULE =
       HBaseClassTestRule.forClass(TestZKUtil.class);
@@ -69,7 +68,6 @@ public class TestZKUtil {
     UTIL.startMiniZKCluster().getClientPort();
     ZKW = new ZKWatcher(new Configuration(UTIL.getConfiguration()), TestZKUtil.class.getName(),
         new WarnOnlyAbortable());
-
   }
 
   @AfterClass
@@ -157,11 +155,11 @@ public class TestZKUtil {
     String quorumServers = ZKConfig.getZKQuorumServersString(c);
     int sessionTimeout = 5 * 1000; // 5 seconds
     ZooKeeper zk = new ZooKeeper(quorumServers, sessionTimeout, EmptyWatcher.instance);
-    zk.addAuthInfo("digest", "hbase:rox".getBytes());
+    zk.addAuthInfo("digest", Bytes.toBytes("hbase:rox"));
 
     // Save the previous ACL
-    Stat s = null;
-    List<ACL> oldACL = null;
+    Stat s;
+    List<ACL> oldACL;
     while (true) {
       try {
         s = new Stat();
@@ -223,7 +221,7 @@ public class TestZKUtil {
 
     // Restore the ACL
     ZooKeeper zk3 = new ZooKeeper(quorumServers, sessionTimeout, EmptyWatcher.instance);
-    zk3.addAuthInfo("digest", "hbase:rox".getBytes());
+    zk3.addAuthInfo("digest", Bytes.toBytes("hbase:rox"));
     try {
       zk3.setACL("/", oldACL, -1);
     } finally {

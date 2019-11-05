@@ -20,6 +20,7 @@ package org.apache.hadoop.hbase.snapshot;
 import java.io.IOException;
 import java.security.PrivilegedExceptionAction;
 import java.util.Collections;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -33,9 +34,9 @@ import org.apache.hadoop.hbase.client.Admin;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.security.User;
-import org.apache.hadoop.hbase.security.access.AccessControlLists;
+import org.apache.hadoop.hbase.security.access.PermissionStorage;
 import org.apache.hadoop.hbase.security.access.ShadedAccessControlUtil;
-import org.apache.hadoop.hbase.security.access.TablePermission;
+import org.apache.hadoop.hbase.security.access.UserPermission;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.yetus.audience.InterfaceAudience;
@@ -114,33 +115,23 @@ public final class SnapshotDescriptionUtils {
   /** Temporary directory under the snapshot directory to store in-progress snapshots */
   public static final String SNAPSHOT_TMP_DIR_NAME = ".tmp";
 
-  /** This tag will be created in in-progess snapshots */
-  public static final String SNAPSHOT_IN_PROGRESS = ".inprogress";
+  /**
+   * The configuration property that determines the filepath of the snapshot
+   * base working directory
+   */
+  public static final String SNAPSHOT_WORKING_DIR = "hbase.snapshot.working.dir";
+
   // snapshot operation values
   /** Default value if no start time is specified */
   public static final long NO_SNAPSHOT_START_TIME_SPECIFIED = 0;
 
+  // Default value if no ttl is specified for Snapshot
+  private static final long NO_SNAPSHOT_TTL_SPECIFIED = 0;
 
   public static final String MASTER_SNAPSHOT_TIMEOUT_MILLIS = "hbase.snapshot.master.timeout.millis";
 
   /** By default, wait 300 seconds for a snapshot to complete */
   public static final long DEFAULT_MAX_WAIT_TIME = 60000 * 5 ;
-
-
-  /**
-   * By default, check to see if the snapshot is complete (ms)
-   * @deprecated Use {@link #DEFAULT_MAX_WAIT_TIME} instead.
-   * */
-  @Deprecated
-  public static final int SNAPSHOT_TIMEOUT_MILLIS_DEFAULT = 60000 * 5;
-
-  /**
-   * Conf key for # of ms elapsed before injecting a snapshot timeout error when waiting for
-   * completion.
-   * @deprecated Use {@link #MASTER_SNAPSHOT_TIMEOUT_MILLIS} instead.
-   */
-  @Deprecated
-  public static final String SNAPSHOT_TIMEOUT_MILLIS_KEY = "hbase.snapshot.master.timeoutMillis";
 
   private SnapshotDescriptionUtils() {
     // private constructor for utility class
@@ -161,7 +152,7 @@ public final class SnapshotDescriptionUtils {
       confKey = MASTER_SNAPSHOT_TIMEOUT_MILLIS;
     }
     return Math.max(conf.getLong(confKey, defaultMaxWaitTime),
-        conf.getLong(SNAPSHOT_TIMEOUT_MILLIS_KEY, defaultMaxWaitTime));
+        conf.getLong(MASTER_SNAPSHOT_TIMEOUT_MILLIS, defaultMaxWaitTime));
   }
 
   /**
@@ -193,46 +184,52 @@ public final class SnapshotDescriptionUtils {
    * @return the final directory for the completed snapshot
    */
   public static Path getCompletedSnapshotDir(final String snapshotName, final Path rootDir) {
-    return getCompletedSnapshotDir(getSnapshotsDir(rootDir), snapshotName);
+    return getSpecifiedSnapshotDir(getSnapshotsDir(rootDir), snapshotName);
   }
 
   /**
    * Get the general working directory for snapshots - where they are built, where they are
    * temporarily copied on export, etc.
    * @param rootDir root directory of the HBase installation
+   * @param conf Configuration of the HBase instance
    * @return Path to the snapshot tmp directory, relative to the passed root directory
    */
-  public static Path getWorkingSnapshotDir(final Path rootDir) {
-    return new Path(getSnapshotsDir(rootDir), SNAPSHOT_TMP_DIR_NAME);
+  public static Path getWorkingSnapshotDir(final Path rootDir, final Configuration conf) {
+    return new Path(conf.get(SNAPSHOT_WORKING_DIR,
+        getDefaultWorkingSnapshotDir(rootDir).toString()));
   }
 
   /**
    * Get the directory to build a snapshot, before it is finalized
    * @param snapshot snapshot that will be built
    * @param rootDir root directory of the hbase installation
+   * @param conf Configuration of the HBase instance
    * @return {@link Path} where one can build a snapshot
    */
-  public static Path getWorkingSnapshotDir(SnapshotDescription snapshot, final Path rootDir) {
-    return getCompletedSnapshotDir(getWorkingSnapshotDir(rootDir), snapshot.getName());
+  public static Path getWorkingSnapshotDir(SnapshotDescription snapshot, final Path rootDir,
+      Configuration conf) {
+    return getWorkingSnapshotDir(snapshot.getName(), rootDir, conf);
   }
 
   /**
    * Get the directory to build a snapshot, before it is finalized
    * @param snapshotName name of the snapshot
    * @param rootDir root directory of the hbase installation
+   * @param conf Configuration of the HBase instance
    * @return {@link Path} where one can build a snapshot
    */
-  public static Path getWorkingSnapshotDir(String snapshotName, final Path rootDir) {
-    return getCompletedSnapshotDir(getWorkingSnapshotDir(rootDir), snapshotName);
+  public static Path getWorkingSnapshotDir(String snapshotName, final Path rootDir,
+      Configuration conf) {
+    return getSpecifiedSnapshotDir(getWorkingSnapshotDir(rootDir, conf), snapshotName);
   }
 
   /**
-   * Get the directory to store the snapshot instance
-   * @param snapshotsDir hbase-global directory for storing all snapshots
+   * Get the directory within the given filepath to store the snapshot instance
+   * @param snapshotsDir directory to store snapshot directory within
    * @param snapshotName name of the snapshot to take
-   * @return the final directory for the completed snapshot
+   * @return the final directory for the snapshot in the given filepath
    */
-  private static final Path getCompletedSnapshotDir(final Path snapshotsDir, String snapshotName) {
+  private static final Path getSpecifiedSnapshotDir(final Path snapshotsDir, String snapshotName) {
     return new Path(snapshotsDir, snapshotName);
   }
 
@@ -242,6 +239,41 @@ public final class SnapshotDescriptionUtils {
    */
   public static final Path getSnapshotsDir(Path rootDir) {
     return new Path(rootDir, HConstants.SNAPSHOT_DIR_NAME);
+  }
+
+  /**
+   * Determines if the given workingDir is a subdirectory of the given "root directory"
+   * @param workingDir a directory to check
+   * @param rootDir root directory of the HBase installation
+   * @return true if the given workingDir is a subdirectory of the given root directory,
+   *   false otherwise
+   */
+  public static boolean isSubDirectoryOf(final Path workingDir, final Path rootDir) {
+    return workingDir.toString().startsWith(rootDir.toString() + Path.SEPARATOR);
+  }
+
+  /**
+   * Determines if the given workingDir is a subdirectory of the default working snapshot directory
+   * @param workingDir a directory to check
+   * @param conf configuration for the HBase cluster
+   * @return true if the given workingDir is a subdirectory of the default working directory for
+   *   snapshots, false otherwise
+   * @throws IOException if we can't get the root dir
+   */
+  public static boolean isWithinDefaultWorkingDir(final Path workingDir, Configuration conf)
+    throws IOException {
+    Path defaultWorkingDir = getDefaultWorkingSnapshotDir(FSUtils.getRootDir(conf));
+    return workingDir.equals(defaultWorkingDir) || isSubDirectoryOf(workingDir, defaultWorkingDir);
+  }
+
+  /**
+   * Get the default working directory for snapshots - where they are built, where they are
+   * temporarily copied on export, etc.
+   * @param rootDir root directory of the HBase installation
+   * @return Path to the default snapshot tmp directory, relative to the passed root directory
+   */
+  private static Path getDefaultWorkingSnapshotDir(final Path rootDir) {
+    return new Path(getSnapshotsDir(rootDir), SNAPSHOT_TMP_DIR_NAME);
   }
 
   /**
@@ -271,6 +303,22 @@ public final class SnapshotDescriptionUtils {
       builder.setCreationTime(time);
       snapshot = builder.build();
     }
+
+    long ttl = snapshot.getTtl();
+    // set default ttl(sec) if it is not set already or the value is out of the range
+    if (ttl == SnapshotDescriptionUtils.NO_SNAPSHOT_TTL_SPECIFIED ||
+        ttl > TimeUnit.MILLISECONDS.toSeconds(Long.MAX_VALUE)) {
+      final long defaultSnapshotTtl = conf.getLong(HConstants.DEFAULT_SNAPSHOT_TTL_CONFIG_KEY,
+          HConstants.DEFAULT_SNAPSHOT_TTL);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Snapshot current TTL value: {} resetting it to default value: {}", ttl,
+            defaultSnapshotTtl);
+      }
+      ttl = defaultSnapshotTtl;
+    }
+    SnapshotDescription.Builder builder = snapshot.toBuilder();
+    builder.setTtl(ttl);
+    snapshot = builder.build();
 
     // set the acl to snapshot if security feature is enabled.
     if (isSecurityAvailable(conf)) {
@@ -307,16 +355,6 @@ public final class SnapshotDescriptionUtils {
         throw new IOException(msg);
       }
     }
-  }
-
-  /**
-   * Create in-progress tag under .tmp of in-progress snapshot
-   * */
-  public static void createInProgressTag(Path workingDir, FileSystem fs) throws IOException {
-    FsPermission perms = FSUtils.getFilePermissions(fs, fs.getConf(),
-      HConstants.DATA_FILE_UMASK_KEY);
-    Path snapshot_in_progress = new Path(workingDir, SnapshotDescriptionUtils.SNAPSHOT_IN_PROGRESS);
-    FSUtils.create(fs, snapshot_in_progress, perms, true);
   }
 
   /**
@@ -383,18 +421,18 @@ public final class SnapshotDescriptionUtils {
   public static boolean isSecurityAvailable(Configuration conf) throws IOException {
     try (Connection conn = ConnectionFactory.createConnection(conf)) {
       try (Admin admin = conn.getAdmin()) {
-        return admin.tableExists(AccessControlLists.ACL_TABLE_NAME);
+        return admin.tableExists(PermissionStorage.ACL_TABLE_NAME);
       }
     }
   }
 
   private static SnapshotDescription writeAclToSnapshotDescription(SnapshotDescription snapshot,
       Configuration conf) throws IOException {
-    ListMultimap<String, TablePermission> perms =
-        User.runAsLoginUser(new PrivilegedExceptionAction<ListMultimap<String, TablePermission>>() {
+    ListMultimap<String, UserPermission> perms =
+        User.runAsLoginUser(new PrivilegedExceptionAction<ListMultimap<String, UserPermission>>() {
           @Override
-          public ListMultimap<String, TablePermission> run() throws Exception {
-            return AccessControlLists.getTablePermissions(conf,
+          public ListMultimap<String, UserPermission> run() throws Exception {
+            return PermissionStorage.getTablePermissions(conf,
               TableName.valueOf(snapshot.getTable()));
           }
         });

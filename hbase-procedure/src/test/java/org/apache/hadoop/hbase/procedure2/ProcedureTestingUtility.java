@@ -15,7 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.procedure2;
 
 import static org.junit.Assert.assertEquals;
@@ -46,7 +45,7 @@ import org.apache.hbase.thirdparty.com.google.protobuf.BytesValue;
 
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos.ProcedureState;
 
-public class ProcedureTestingUtility {
+public final class ProcedureTestingUtility {
   private static final Logger LOG = LoggerFactory.getLogger(ProcedureTestingUtility.class);
 
   private ProcedureTestingUtility() {
@@ -67,20 +66,44 @@ public class ProcedureTestingUtility {
     });
   }
 
+  public static <TEnv> void restart(final ProcedureExecutor<TEnv> procExecutor,
+      boolean abort, boolean startWorkers) throws Exception {
+    restart(procExecutor, false, true, null, null, null,  abort, startWorkers);
+  }
+
+  public static <TEnv> void restart(final ProcedureExecutor<TEnv> procExecutor,
+      boolean abort) throws Exception {
+    restart(procExecutor, false, true, null, null, null, abort, true);
+  }
+
   public static <TEnv> void restart(final ProcedureExecutor<TEnv> procExecutor) throws Exception {
-    restart(procExecutor, false, true, null, null, null);
+    restart(procExecutor, false, true, null, null, null, false, true);
   }
 
   public static void initAndStartWorkers(ProcedureExecutor<?> procExecutor, int numThreads,
       boolean abortOnCorruption) throws IOException {
+    initAndStartWorkers(procExecutor, numThreads, abortOnCorruption, true);
+  }
+
+  public static void initAndStartWorkers(ProcedureExecutor<?> procExecutor, int numThreads,
+      boolean abortOnCorruption, boolean startWorkers) throws IOException {
     procExecutor.init(numThreads, abortOnCorruption);
-    procExecutor.startWorkers();
+    if (startWorkers) {
+      procExecutor.startWorkers();
+    }
   }
 
   public static <TEnv> void restart(ProcedureExecutor<TEnv> procExecutor,
       boolean avoidTestKillDuringRestart, boolean failOnCorrupted, Callable<Void> stopAction,
-      Callable<Void> actionBeforeStartWorker, Callable<Void> startAction)
-      throws Exception {
+      Callable<Void> actionBeforeStartWorker, Callable<Void> startAction) throws Exception {
+    restart(procExecutor, avoidTestKillDuringRestart, failOnCorrupted, stopAction,
+      actionBeforeStartWorker, startAction, false, true);
+  }
+
+  public static <TEnv> void restart(ProcedureExecutor<TEnv> procExecutor,
+      boolean avoidTestKillDuringRestart, boolean failOnCorrupted, Callable<Void> stopAction,
+      Callable<Void> actionBeforeStartWorker, Callable<Void> startAction, boolean abort,
+      boolean startWorkers) throws Exception {
     final ProcedureStore procStore = procExecutor.getStore();
     final int storeThreads = procExecutor.getCorePoolSize();
     final int execThreads = procExecutor.getCorePoolSize();
@@ -93,7 +116,7 @@ public class ProcedureTestingUtility {
     // stop
     LOG.info("RESTART - Stop");
     procExecutor.stop();
-    procStore.stop(false);
+    procStore.stop(abort);
     if (stopAction != null) {
       stopAction.call();
     }
@@ -109,13 +132,14 @@ public class ProcedureTestingUtility {
     if (actionBeforeStartWorker != null) {
       actionBeforeStartWorker.call();
     }
-    procExecutor.startWorkers();
-    if (startAction != null) {
-      startAction.call();
-    }
-
     if (avoidTestKillDuringRestart) {
       procExecutor.testing = testing;
+    }
+    if (startWorkers) {
+      procExecutor.startWorkers();
+    }
+    if (startAction != null) {
+      startAction.call();
     }
   }
 
@@ -194,7 +218,10 @@ public class ProcedureTestingUtility {
 
   private static <TEnv> void assertSingleExecutorForKillTests(
       final ProcedureExecutor<TEnv> procExecutor) {
-    if (procExecutor.testing == null) return;
+    if (procExecutor.testing == null) {
+      return;
+    }
+
     if (procExecutor.testing.killBeforeStoreUpdate ||
         procExecutor.testing.toggleKillBeforeStoreUpdate) {
       assertEquals("expected only one executor running during test with kill/restart",
@@ -207,7 +234,7 @@ public class ProcedureTestingUtility {
     NoopProcedureStore procStore = new NoopProcedureStore();
     ProcedureExecutor<TEnv> procExecutor = new ProcedureExecutor<>(conf, env, procStore);
     procStore.start(1);
-    initAndStartWorkers(procExecutor, 1, false);
+    initAndStartWorkers(procExecutor, 1, false, true);
     try {
       return submitAndWait(procExecutor, proc, HConstants.NO_NONCE, HConstants.NO_NONCE);
     } finally {
@@ -377,7 +404,7 @@ public class ProcedureTestingUtility {
     public NoopProcedure() {}
 
     @Override
-    protected Procedure[] execute(TEnv env)
+    protected Procedure<TEnv>[] execute(TEnv env)
         throws ProcedureYieldException, ProcedureSuspendedException, InterruptedException {
       return null;
     }
@@ -387,7 +414,9 @@ public class ProcedureTestingUtility {
     }
 
     @Override
-    protected boolean abort(TEnv env) { return false; }
+    protected boolean abort(TEnv env) {
+      return false;
+    }
 
     @Override
     protected void serializeStateData(ProcedureStateSerializer serializer)
@@ -397,6 +426,46 @@ public class ProcedureTestingUtility {
     @Override
     protected void deserializeStateData(ProcedureStateSerializer serializer)
         throws IOException {
+    }
+  }
+
+  public static class NoopStateMachineProcedure<TEnv, TState>
+      extends StateMachineProcedure<TEnv, TState> {
+    private TState initialState;
+    private TEnv env;
+
+    public NoopStateMachineProcedure() {
+    }
+
+    public NoopStateMachineProcedure(TEnv env, TState initialState) {
+      this.env = env;
+      this.initialState = initialState;
+    }
+
+    @Override
+    protected Flow executeFromState(TEnv env, TState tState)
+        throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
+      return null;
+    }
+
+    @Override
+    protected void rollbackState(TEnv env, TState tState) throws IOException, InterruptedException {
+
+    }
+
+    @Override
+    protected TState getState(int stateId) {
+      return null;
+    }
+
+    @Override
+    protected int getStateId(TState tState) {
+      return 0;
+    }
+
+    @Override
+    protected TState getInitialState() {
+      return initialState;
     }
   }
 

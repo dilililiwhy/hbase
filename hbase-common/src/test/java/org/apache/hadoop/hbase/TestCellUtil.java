@@ -180,6 +180,11 @@ public class TestCellUtil {
     }
 
     @Override
+    public int getSerializedSize() {
+      return 0;
+    }
+
+    @Override
     public byte[] getTagsArray() {
       // TODO Auto-generated method stub
       return null;
@@ -200,6 +205,11 @@ public class TestCellUtil {
     @Override
     public int getTagsLength() {
       // TODO Auto-generated method stub
+      return 0;
+    }
+
+    @Override
+    public long heapSize() {
       return 0;
     }
   }
@@ -372,19 +382,30 @@ public class TestCellUtil {
     // Make a KeyValue and a Cell and see if same toString result.
     KeyValue kv = new KeyValue(row, HConstants.EMPTY_BYTE_ARRAY, HConstants.EMPTY_BYTE_ARRAY,
         ts, KeyValue.Type.Minimum, HConstants.EMPTY_BYTE_ARRAY);
-    Cell cell = CellUtil.createCell(row, HConstants.EMPTY_BYTE_ARRAY, HConstants.EMPTY_BYTE_ARRAY,
-        ts, KeyValue.Type.Minimum.getCode(), HConstants.EMPTY_BYTE_ARRAY);
+    Cell cell = ExtendedCellBuilderFactory.create(CellBuilderType.DEEP_COPY)
+      .setRow(row)
+      .setFamily(HConstants.EMPTY_BYTE_ARRAY)
+      .setQualifier(HConstants.EMPTY_BYTE_ARRAY)
+      .setTimestamp(ts)
+      .setType(KeyValue.Type.Minimum.getCode())
+      .setValue(HConstants.EMPTY_BYTE_ARRAY)
+      .build();
     String cellToString = CellUtil.getCellKeyAsString(cell);
     assertEquals(kv.toString(), cellToString);
     // Do another w/ non-null family.
     byte [] f = new byte [] {'f'};
     byte [] q = new byte [] {'q'};
     kv = new KeyValue(row, f, q, ts, KeyValue.Type.Minimum, HConstants.EMPTY_BYTE_ARRAY);
-    cell = CellUtil.createCell(row, f, q, ts, KeyValue.Type.Minimum.getCode(),
-        HConstants.EMPTY_BYTE_ARRAY);
+    cell = ExtendedCellBuilderFactory.create(CellBuilderType.DEEP_COPY)
+      .setRow(row)
+      .setFamily(f)
+      .setQualifier(q)
+      .setTimestamp(ts)
+      .setType(KeyValue.Type.Minimum.getCode())
+      .setValue(HConstants.EMPTY_BYTE_ARRAY)
+      .build();
     cellToString = CellUtil.getCellKeyAsString(cell);
     assertEquals(kv.toString(), cellToString);
-
   }
 
   @Test
@@ -397,8 +418,15 @@ public class TestCellUtil {
     String value = "test.value";
     long seqId = 1042;
 
-    Cell cell = CellUtil.createCell(Bytes.toBytes(row), Bytes.toBytes(family),
-      Bytes.toBytes(qualifier), timestamp, type.getCode(), Bytes.toBytes(value), seqId);
+    Cell cell = ExtendedCellBuilderFactory.create(CellBuilderType.DEEP_COPY)
+      .setRow(Bytes.toBytes(row))
+      .setFamily(Bytes.toBytes(family))
+      .setQualifier(Bytes.toBytes(qualifier))
+      .setTimestamp(timestamp)
+      .setType(type.getCode())
+      .setValue(Bytes.toBytes(value))
+      .setSequenceId(seqId)
+      .build();
 
     String nonVerbose = CellUtil.toString(cell, false);
     String verbose = CellUtil.toString(cell, true);
@@ -524,11 +552,16 @@ public class TestCellUtil {
     assertTrue(CellUtil.equals(kv, res));
   }
 
+  // Workaround for jdk 11 - reflective access to interface default methods for testGetType
+  private abstract class CellForMockito implements Cell {
+
+  }
+
   @Test
   public void testGetType() throws IOException {
-    Cell c = Mockito.mock(Cell.class);
+    CellForMockito c = Mockito.mock(CellForMockito.class);
     Mockito.when(c.getType()).thenCallRealMethod();
-    for (Cell.Type type : Cell.Type.values()) {
+    for (CellForMockito.Type type : CellForMockito.Type.values()) {
       Mockito.when(c.getTypeByte()).thenReturn(type.getCode());
       assertEquals(type, c.getType());
     }
@@ -631,6 +664,11 @@ public class TestCellUtil {
     }
 
     @Override
+    public int getSerializedSize() {
+      return this.kv.getSerializedSize();
+    }
+
+    @Override
     public byte[] getTagsArray() {
       return this.kv.getTagsArray();
     }
@@ -643,6 +681,11 @@ public class TestCellUtil {
     @Override
     public int getTagsLength() {
       return this.kv.getTagsLength();
+    }
+
+    @Override
+    public long heapSize() {
+      return this.kv.heapSize();
     }
   }
 }

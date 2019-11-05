@@ -31,9 +31,13 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.*;
 import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CompareOperator;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HBaseTestingUtility;
+import org.apache.hadoop.hbase.NotServingRegionException;
+import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.client.Put;
@@ -41,7 +45,6 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.Table;
-import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.hadoop.hbase.filter.RegexStringComparator;
 import org.apache.hadoop.hbase.filter.RowFilter;
@@ -124,14 +127,14 @@ public class TestTableInputFormat {
    */
   public static Table createTable(byte[] tableName, byte[][] families) throws IOException {
     Table table = UTIL.createTable(TableName.valueOf(tableName), families);
-    Put p = new Put("aaa".getBytes());
+    Put p = new Put(Bytes.toBytes("aaa"));
     for (byte[] family : families) {
-      p.addColumn(family, null, "value aaa".getBytes());
+      p.addColumn(family, null, Bytes.toBytes("value aaa"));
     }
     table.put(p);
-    p = new Put("bbb".getBytes());
+    p = new Put(Bytes.toBytes("bbb"));
     for (byte[] family : families) {
-      p.addColumn(family, null, "value bbb".getBytes());
+      p.addColumn(family, null, Bytes.toBytes("value bbb"));
     }
     table.put(p);
     return table;
@@ -140,11 +143,11 @@ public class TestTableInputFormat {
   /**
    * Verify that the result and key have expected values.
    *
-   * @param r
-   * @param key
-   * @param expectedKey
-   * @param expectedValue
-   * @return
+   * @param r single row result
+   * @param key the row key
+   * @param expectedKey the expected key
+   * @param expectedValue the expected value
+   * @return true if the result contains the expected key and value, false otherwise.
    */
   static boolean checkResult(Result r, ImmutableBytesWritable key,
       byte[] expectedKey, byte[] expectedValue) {
@@ -165,8 +168,8 @@ public class TestTableInputFormat {
   static void runTestMapred(Table table) throws IOException {
     org.apache.hadoop.hbase.mapred.TableRecordReader trr =
         new org.apache.hadoop.hbase.mapred.TableRecordReader();
-    trr.setStartRow("aaa".getBytes());
-    trr.setEndRow("zzz".getBytes());
+    trr.setStartRow(Bytes.toBytes("aaa"));
+    trr.setEndRow(Bytes.toBytes("zzz"));
     trr.setHTable(table);
     trr.setInputColumns(columns);
 
@@ -176,11 +179,11 @@ public class TestTableInputFormat {
 
     boolean more = trr.next(key, r);
     assertTrue(more);
-    checkResult(r, key, "aaa".getBytes(), "value aaa".getBytes());
+    checkResult(r, key, Bytes.toBytes("aaa"), Bytes.toBytes("value aaa"));
 
     more = trr.next(key, r);
     assertTrue(more);
-    checkResult(r, key, "bbb".getBytes(), "value bbb".getBytes());
+    checkResult(r, key, Bytes.toBytes("bbb"), Bytes.toBytes("value bbb"));
 
     // no more data
     more = trr.next(key, r);
@@ -204,7 +207,7 @@ public class TestTableInputFormat {
         if (cnt++ < failCnt) {
           // create mock ResultScanner that always fails.
           Scan scan = mock(Scan.class);
-          doReturn("bogus".getBytes()).when(scan).getStartRow(); // avoid npe
+          doReturn(Bytes.toBytes("bogus")).when(scan).getStartRow(); // avoid npe
           ResultScanner scanner = mock(ResultScanner.class);
           // simulate TimeoutException / IOException
           doThrow(new IOException("Injected exception")).when(scanner).next();
@@ -239,7 +242,7 @@ public class TestTableInputFormat {
         if (cnt++ < failCnt) {
           // create mock ResultScanner that always fails.
           Scan scan = mock(Scan.class);
-          doReturn("bogus".getBytes()).when(scan).getStartRow(); // avoid npe
+          doReturn(Bytes.toBytes("bogus")).when(scan).getStartRow(); // avoid npe
           ResultScanner scanner = mock(ResultScanner.class);
 
           invocation.callRealMethod(); // simulate NotServingRegionException
@@ -266,7 +269,7 @@ public class TestTableInputFormat {
    */
   @Test
   public void testTableRecordReader() throws IOException {
-    Table table = createTable("table1".getBytes());
+    Table table = createTable(Bytes.toBytes("table1"));
     runTestMapred(table);
   }
 
@@ -277,7 +280,7 @@ public class TestTableInputFormat {
    */
   @Test
   public void testTableRecordReaderScannerFail() throws IOException {
-    Table htable = createIOEScannerTable("table2".getBytes(), 1);
+    Table htable = createIOEScannerTable(Bytes.toBytes("table2"), 1);
     runTestMapred(htable);
   }
 
@@ -288,7 +291,7 @@ public class TestTableInputFormat {
    */
   @Test(expected = IOException.class)
   public void testTableRecordReaderScannerFailTwice() throws IOException {
-    Table htable = createIOEScannerTable("table3".getBytes(), 2);
+    Table htable = createIOEScannerTable(Bytes.toBytes("table3"), 2);
     runTestMapred(htable);
   }
 
@@ -299,7 +302,7 @@ public class TestTableInputFormat {
    */
   @Test
   public void testTableRecordReaderScannerTimeout() throws IOException {
-    Table htable = createDNRIOEScannerTable("table4".getBytes(), 1);
+    Table htable = createDNRIOEScannerTable(Bytes.toBytes("table4"), 1);
     runTestMapred(htable);
   }
 
@@ -310,7 +313,7 @@ public class TestTableInputFormat {
    */
   @Test(expected = org.apache.hadoop.hbase.NotServingRegionException.class)
   public void testTableRecordReaderScannerTimeoutTwice() throws IOException {
-    Table htable = createDNRIOEScannerTable("table5".getBytes(), 2);
+    Table htable = createDNRIOEScannerTable(Bytes.toBytes("table5"), 2);
     runTestMapred(htable);
   }
 

@@ -488,7 +488,7 @@ public class SimpleRpcServer extends RpcServer {
       Message param, CellScanner cellScanner, long receiveTime, MonitoredRPCHandler status,
       long startTime, int timeout) throws IOException {
     SimpleServerCall fakeCall = new SimpleServerCall(-1, service, md, null, param, cellScanner,
-        null, -1, null, receiveTime, timeout, reservoir, cellBlockBuilder, null, null);
+        null, -1, null, receiveTime, timeout, bbAllocator, cellBlockBuilder, null, null);
     return call(fakeCall, status);
   }
 
@@ -613,7 +613,8 @@ public class SimpleRpcServer extends RpcServer {
             "; connections=" + size() +
             ", queued calls size (bytes)=" + callQueueSizeInBytes.sum() +
             ", general queued calls=" + scheduler.getGeneralQueueLength() +
-            ", priority queued calls=" + scheduler.getPriorityQueueLength());
+            ", priority queued calls=" + scheduler.getPriorityQueueLength() +
+            ", meta priority queued calls=" + scheduler.getMetaPriorityQueueLength());
       }
       return connection;
     }

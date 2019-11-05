@@ -16,12 +16,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.filter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Objects;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CompareOperator;
@@ -47,21 +45,6 @@ import org.apache.hbase.thirdparty.com.google.protobuf.InvalidProtocolBufferExce
  */
 @InterfaceAudience.Public
 public class FamilyFilter extends CompareFilter {
-
-  /**
-   * Constructor.
-   *
-   * @param familyCompareOp  the compare op for column family matching
-   * @param familyComparator the comparator for column family matching
-   * @deprecated  Since 2.0.0. Will be removed in 3.0.0.
-   *  Use {@link #FamilyFilter(CompareOperator, ByteArrayComparable)}
-   */
-  @Deprecated
-  public FamilyFilter(final CompareOp familyCompareOp,
-                      final ByteArrayComparable familyComparator) {
-      super(familyCompareOp, familyComparator);
-  }
-
   /**
    * Constructor.
    *
@@ -71,12 +54,6 @@ public class FamilyFilter extends CompareFilter {
   public FamilyFilter(final CompareOperator op,
                       final ByteArrayComparable familyComparator) {
     super(op, familyComparator);
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -150,15 +127,11 @@ public class FamilyFilter extends CompareFilter {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof FamilyFilter))) {
-      return false;
-    }
-    FamilyFilter f = (FamilyFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(this.getComparator(), this.getCompareOperator());
+    return super.hashCode();
   }
 }

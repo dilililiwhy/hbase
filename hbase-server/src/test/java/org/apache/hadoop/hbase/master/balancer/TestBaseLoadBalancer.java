@@ -52,6 +52,7 @@ import org.apache.hadoop.hbase.master.balancer.BaseLoadBalancer.Cluster;
 import org.apache.hadoop.hbase.master.balancer.BaseLoadBalancer.Cluster.MoveRegionAction;
 import org.apache.hadoop.hbase.testclassification.MasterTests;
 import org.apache.hadoop.hbase.testclassification.MediumTests;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.net.DNSToSwitchMapping;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -259,8 +260,8 @@ public class TestBaseLoadBalancer extends BalancerTestBase {
     Mockito.when(services.getServerManager()).thenReturn(sm);
     balancer.setMasterServices(services);
     RegionInfo hri1 = RegionInfoBuilder.newBuilder(TableName.valueOf(name.getMethodName()))
-        .setStartKey("key1".getBytes())
-        .setEndKey("key2".getBytes())
+        .setStartKey(Bytes.toBytes("key1"))
+        .setEndKey(Bytes.toBytes("key2"))
         .setSplit(false)
         .setRegionId(100)
         .build();
@@ -284,8 +285,8 @@ public class TestBaseLoadBalancer extends BalancerTestBase {
     List<RegionInfo> list2 = new ArrayList<>();
     // create a region (region1)
     RegionInfo hri1 = RegionInfoBuilder.newBuilder(TableName.valueOf(name.getMethodName()))
-        .setStartKey("key1".getBytes())
-        .setEndKey("key2".getBytes())
+        .setStartKey(Bytes.toBytes("key1"))
+        .setEndKey(Bytes.toBytes("key2"))
         .setSplit(false)
         .setRegionId(100)
         .build();
@@ -293,8 +294,8 @@ public class TestBaseLoadBalancer extends BalancerTestBase {
     RegionInfo hri2 = RegionReplicaUtil.getRegionInfoForReplica(hri1, 1);
     // create a second region (region2)
     RegionInfo hri3 = RegionInfoBuilder.newBuilder(TableName.valueOf(name.getMethodName()))
-        .setStartKey("key2".getBytes())
-        .setEndKey("key3".getBytes())
+        .setStartKey(Bytes.toBytes("key2"))
+        .setEndKey(Bytes.toBytes("key3"))
         .setSplit(false)
         .setRegionId(101)
         .build();
@@ -358,8 +359,8 @@ public class TestBaseLoadBalancer extends BalancerTestBase {
     List<RegionInfo> list2 = new ArrayList<>();
     // create a region (region1)
     RegionInfo hri1 = RegionInfoBuilder.newBuilder(TableName.valueOf(name.getMethodName()))
-        .setStartKey("key1".getBytes())
-        .setEndKey("key2".getBytes())
+        .setStartKey(Bytes.toBytes("key1"))
+        .setEndKey(Bytes.toBytes("key2"))
         .setSplit(false)
         .setRegionId(100)
         .build();
@@ -367,8 +368,8 @@ public class TestBaseLoadBalancer extends BalancerTestBase {
     RegionInfo hri2 = RegionReplicaUtil.getRegionInfoForReplica(hri1, 1);
     // create a second region (region2)
     RegionInfo hri3 = RegionInfoBuilder.newBuilder(TableName.valueOf(name.getMethodName()))
-        .setStartKey("key2".getBytes())
-        .setEndKey("key3".getBytes())
+        .setStartKey(Bytes.toBytes("key2"))
+        .setEndKey(Bytes.toBytes("key3"))
         .setSplit(false)
         .setRegionId(101)
         .build();
@@ -472,7 +473,7 @@ public class TestBaseLoadBalancer extends BalancerTestBase {
     // sharing same host and port
     List<ServerName> servers = getListOfServerNames(randomServers(10, 10));
     List<RegionInfo> regions = randomRegions(101);
-    Map<ServerName, List<RegionInfo>> clusterState = new HashMap<>();
+    Map<ServerName, List<RegionInfo>> clusterState = new TreeMap<>();
 
     assignRegions(regions, servers, clusterState);
 
@@ -490,6 +491,13 @@ public class TestBaseLoadBalancer extends BalancerTestBase {
     BaseLoadBalancer.Cluster cluster = new Cluster(clusterState, null, null, null);
     assertEquals(101 + 9, cluster.numRegions);
     assertEquals(10, cluster.numServers); // only 10 servers because they share the same host + port
+
+    // test move
+    ServerName sn = oldServers.get(0);
+    int r0 = ArrayUtils.indexOf(cluster.regions, clusterState.get(sn).get(0));
+    int f0 = cluster.serversToIndex.get(sn.getHostAndPort());
+    int t0 = cluster.serversToIndex.get(servers.get(1).getHostAndPort());
+    cluster.doAction(new MoveRegionAction(r0, f0, t0));
   }
 
   private void assignRegions(List<RegionInfo> regions, List<ServerName> servers,

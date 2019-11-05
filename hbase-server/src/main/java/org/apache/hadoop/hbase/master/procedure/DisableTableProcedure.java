@@ -34,7 +34,7 @@ import org.apache.hadoop.hbase.master.MasterFileSystem;
 import org.apache.hadoop.hbase.master.TableStateManager;
 import org.apache.hadoop.hbase.procedure2.ProcedureStateSerializer;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
-import org.apache.hadoop.hbase.wal.WALSplitter;
+import org.apache.hadoop.hbase.wal.WALSplitUtil;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -111,13 +111,13 @@ public class DisableTableProcedure
         case DISABLE_TABLE_ADD_REPLICATION_BARRIER:
           if (env.getMasterServices().getTableDescriptors().get(tableName)
             .hasGlobalReplicationScope()) {
-            MasterFileSystem mfs = env.getMasterServices().getMasterFileSystem();
+            MasterFileSystem fs = env.getMasterFileSystem();
             try (BufferedMutator mutator = env.getMasterServices().getConnection()
               .getBufferedMutator(TableName.META_TABLE_NAME)) {
               for (RegionInfo region : env.getAssignmentManager().getRegionStates()
                 .getRegionsOfTable(tableName)) {
-                long maxSequenceId =
-                  WALSplitter.getMaxRegionSequenceId(mfs.getFileSystem(), mfs.getRegionDir(region));
+                long maxSequenceId = WALSplitUtil.getMaxRegionSequenceId(
+                  env.getMasterConfiguration(), region, fs::getFileSystem, fs::getWALFileSystem);
                 long openSeqNum = maxSequenceId > 0 ? maxSequenceId + 1 : HConstants.NO_SEQNUM;
                 mutator.mutate(MetaTableAccessor.makePutForReplicationBarrier(region, openSeqNum,
                   EnvironmentEdgeManager.currentTime()));
@@ -261,7 +261,7 @@ public class DisableTableProcedure
       TableStateManager tsm = env.getMasterServices().getTableStateManager();
       TableState ts = tsm.getTableState(tableName);
       if (!ts.isEnabled()) {
-        LOG.info("Not ENABLED skipping {}", this);
+        LOG.info("Not ENABLED, state={}, skipping disable; {}", ts.getState(), this);
         setFailure("master-disable-table", new TableNotEnabledException(ts.toString()));
         canTableBeDisabled = false;
       }

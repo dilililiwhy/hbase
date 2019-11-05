@@ -16,12 +16,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.filter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Objects;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CompareOperator;
@@ -46,21 +44,7 @@ import org.apache.hbase.thirdparty.com.google.protobuf.InvalidProtocolBufferExce
  */
 @InterfaceAudience.Public
 public class RowFilter extends CompareFilter {
-
   private boolean filterOutRow = false;
-
-  /**
-   * Constructor.
-   * @param rowCompareOp the compare op for row matching
-   * @param rowComparator the comparator for row matching
-   * @deprecated Since 2.0.0. Will remove in 3.0.0. Use
-   * {@link #RowFilter(CompareOperator, ByteArrayComparable)}} instead.
-   */
-  @Deprecated
-  public RowFilter(final CompareOp rowCompareOp,
-      final ByteArrayComparable rowComparator) {
-    super(rowCompareOp, rowComparator);
-  }
 
   /**
    * Constructor.
@@ -75,12 +59,6 @@ public class RowFilter extends CompareFilter {
   @Override
   public void reset() {
     this.filterOutRow = false;
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -164,15 +142,11 @@ public class RowFilter extends CompareFilter {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof RowFilter))) {
-      return false;
-    }
-    RowFilter f = (RowFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(this.getComparator(), this.getCompareOperator());
+    return super.hashCode();
   }
 }

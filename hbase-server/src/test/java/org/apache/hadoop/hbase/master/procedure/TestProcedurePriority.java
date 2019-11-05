@@ -22,12 +22,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.Waiter.ExplainingPredicate;
+import org.apache.hadoop.hbase.client.AsyncAdmin;
 import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
 import org.apache.hadoop.hbase.client.Durability;
 import org.apache.hadoop.hbase.client.Get;
@@ -112,14 +114,17 @@ public class TestProcedurePriority {
       UTIL.getMiniHBaseCluster().getMaster().getMasterProcedureExecutor().getCorePoolSize();
     TABLE_COUNT = 50 * CORE_POOL_SIZE;
     List<Future<?>> futures = new ArrayList<>();
+    AsyncAdmin admin = UTIL.getAsyncConnection().getAdmin();
+    Semaphore concurrency = new Semaphore(10);
     for (int i = 0; i < TABLE_COUNT; i++) {
-      futures.add(UTIL.getAdmin().createTableAsync(
-        TableDescriptorBuilder.newBuilder(TableName.valueOf(TABLE_NAME_PREFIX + i))
-          .setColumnFamily(ColumnFamilyDescriptorBuilder.of(CF)).build(),
-        null));
+      concurrency.acquire();
+      futures.add(admin
+        .createTable(TableDescriptorBuilder.newBuilder(TableName.valueOf(TABLE_NAME_PREFIX + i))
+          .setColumnFamily(ColumnFamilyDescriptorBuilder.of(CF)).build())
+        .whenComplete((r, e) -> concurrency.release()));
     }
     for (Future<?> future : futures) {
-      future.get(1, TimeUnit.MINUTES);
+      future.get(3, TimeUnit.MINUTES);
     }
     UTIL.getAdmin().balance(true);
     UTIL.waitUntilNoRegionsInTransition();
@@ -136,8 +141,6 @@ public class TestProcedurePriority {
       .stream().filter(t -> !t.getRegionServer().getRegions(TableName.META_TABLE_NAME).isEmpty())
       .findAny().get();
     HRegionServer rsNoMeta = UTIL.getOtherRegionServer(rsWithMetaThread.getRegionServer());
-    // wait for NS table initialization to avoid our error inject affecting master initialization
-    UTIL.waitTableAvailable(TableName.NAMESPACE_TABLE_NAME);
     FAIL = true;
     UTIL.getMiniHBaseCluster().killRegionServer(rsNoMeta.getServerName());
     // wait until all the worker thread are stuck, which means that the stuck checker will start to
@@ -160,13 +163,13 @@ public class TestProcedurePriority {
     rsWithMetaThread.join();
     FAIL = false;
     // verify that the cluster is back
-    UTIL.waitUntilNoRegionsInTransition(60000);
+    UTIL.waitUntilNoRegionsInTransition(480000);
     for (int i = 0; i < TABLE_COUNT; i++) {
       try (Table table = UTIL.getConnection().getTable(TableName.valueOf(TABLE_NAME_PREFIX + i))) {
         table.put(new Put(Bytes.toBytes(i)).addColumn(CF, CQ, Bytes.toBytes(i)));
       }
     }
-    UTIL.waitFor(30000, new ExplainingPredicate<Exception>() {
+    UTIL.waitFor(60000, new ExplainingPredicate<Exception>() {
 
       @Override
       public boolean evaluate() throws Exception {

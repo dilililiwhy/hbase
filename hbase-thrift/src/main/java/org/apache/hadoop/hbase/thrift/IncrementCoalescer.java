@@ -33,7 +33,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.client.Table;
-import org.apache.hadoop.hbase.thrift.ThriftServerRunner.HBaseHandler;
 import org.apache.hadoop.hbase.thrift.generated.TIncrement;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Threads;
@@ -147,40 +146,13 @@ public class IncrementCoalescer implements IncrementCoalescerMBean {
 
   }
 
-  static class DaemonThreadFactory implements ThreadFactory {
-    static final AtomicInteger poolNumber = new AtomicInteger(1);
-    final ThreadGroup group;
-    final AtomicInteger threadNumber = new AtomicInteger(1);
-    final String namePrefix;
-
-    DaemonThreadFactory() {
-      SecurityManager s = System.getSecurityManager();
-      group = (s != null) ? s.getThreadGroup() : Thread.currentThread().getThreadGroup();
-      namePrefix = "ICV-" + poolNumber.getAndIncrement() + "-thread-";
-    }
-
-    @Override
-    public Thread newThread(Runnable r) {
-      Thread t = new Thread(group, r, namePrefix + threadNumber.getAndIncrement(), 0);
-
-      if (!t.isDaemon()) {
-        t.setDaemon(true);
-      }
-      if (t.getPriority() != Thread.NORM_PRIORITY) {
-        t.setPriority(Thread.NORM_PRIORITY);
-      }
-
-      return t;
-    }
-  }
-
   private final LongAdder failedIncrements = new LongAdder();
   private final LongAdder successfulCoalescings = new LongAdder();
   private final LongAdder totalIncrements = new LongAdder();
   private final ConcurrentMap<FullyQualifiedRow, Long> countersMap =
       new ConcurrentHashMap<>(100000, 0.75f, 1500);
   private final ThreadPoolExecutor pool;
-  private final HBaseHandler handler;
+  private final ThriftHBaseServiceHandler handler;
 
   private int maxQueueSize = 500000;
   private static final int CORE_POOL_SIZE = 1;
@@ -188,13 +160,12 @@ public class IncrementCoalescer implements IncrementCoalescerMBean {
   private static final Logger LOG = LoggerFactory.getLogger(FullyQualifiedRow.class);
 
   @SuppressWarnings("deprecation")
-  public IncrementCoalescer(HBaseHandler hand) {
+  public IncrementCoalescer(ThriftHBaseServiceHandler hand) {
     this.handler = hand;
     LinkedBlockingQueue<Runnable> queue = new LinkedBlockingQueue<>();
-    pool =
-        new ThreadPoolExecutor(CORE_POOL_SIZE, CORE_POOL_SIZE, 50, TimeUnit.MILLISECONDS, queue,
-            Threads.newDaemonThreadFactory("IncrementCoalescer"));
-
+    pool = new ThreadPoolExecutor(CORE_POOL_SIZE, CORE_POOL_SIZE, 50,
+        TimeUnit.MILLISECONDS, queue,
+        Threads.newDaemonThreadFactory("IncrementCoalescer"));
     MBeans.register("thrift", "Thrift", this);
   }
 
@@ -230,6 +201,7 @@ public class IncrementCoalescer implements IncrementCoalescerMBean {
       inc.getAmmount());
   }
 
+  @SuppressWarnings("FutureReturnValueIgnored")
   private boolean internalQueueIncrement(byte[] tableName, byte[] rowKey, byte[] fam,
       byte[] qual, long ammount) throws TException {
     int countersMapSize = countersMap.size();

@@ -36,7 +36,7 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.Waiter;
-import org.apache.hadoop.hbase.client.ClusterConnection;
+import org.apache.hadoop.hbase.client.AsyncClusterConnection;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.io.hfile.BlockCache;
 import org.apache.hadoop.hbase.io.hfile.BlockCacheKey;
@@ -49,7 +49,6 @@ import org.apache.hadoop.hbase.regionserver.HeapMemoryManager.TunerContext;
 import org.apache.hadoop.hbase.regionserver.HeapMemoryManager.TunerResult;
 import org.apache.hadoop.hbase.testclassification.RegionServerTests;
 import org.apache.hadoop.hbase.testclassification.SmallTests;
-import org.apache.hadoop.hbase.zookeeper.MetaTableLocator;
 import org.apache.hadoop.hbase.zookeeper.ZKWatcher;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -736,10 +735,6 @@ public class TestHeapMemoryManager {
       return null;
     }
 
-    @Override
-    public void returnBlock(BlockCacheKey cacheKey, Cacheable buf) {
-    }
-
     public void setTestBlockSize(long testBlockSize) {
       this.testBlockSize = testBlockSize;
     }
@@ -758,14 +753,15 @@ public class TestHeapMemoryManager {
     }
 
     @Override
-    public void requestFlush(HRegion region, boolean forceFlushAllStores,
+    public boolean requestFlush(HRegion region, boolean forceFlushAllStores,
         FlushLifeCycleTracker tracker) {
       this.listener.flushRequested(flushType, region);
+      return true;
     }
 
     @Override
-    public void requestDelayedFlush(HRegion region, long delay, boolean forceFlushAllStores) {
-
+    public boolean requestDelayedFlush(HRegion region, long delay, boolean forceFlushAllStores) {
+      return true;
     }
 
     @Override
@@ -828,12 +824,7 @@ public class TestHeapMemoryManager {
     }
 
     @Override
-    public ClusterConnection getConnection() {
-      return null;
-    }
-
-    @Override
-    public MetaTableLocator getMetaTableLocator() {
+    public Connection getConnection() {
       return null;
     }
 
@@ -844,12 +835,6 @@ public class TestHeapMemoryManager {
 
     @Override
     public ChoreService getChoreService() {
-      return null;
-    }
-
-    @Override
-    public ClusterConnection getClusterConnection() {
-      // TODO Auto-generated method stub
       return null;
     }
 
@@ -865,6 +850,11 @@ public class TestHeapMemoryManager {
 
     @Override
     public Connection createConnection(Configuration conf) throws IOException {
+      return null;
+    }
+
+    @Override
+    public AsyncClusterConnection getAsyncClusterConnection() {
       return null;
     }
   }

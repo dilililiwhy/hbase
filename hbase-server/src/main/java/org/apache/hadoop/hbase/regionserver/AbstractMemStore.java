@@ -92,8 +92,8 @@ public abstract class AbstractMemStore implements MemStore {
     // regionServices can be null when testing
     if (regionServices != null) {
       regionServices.addMemStoreSize(memstoreAccounting.getDataSize(),
-          memstoreAccounting.getHeapSize(),
-          memstoreAccounting.getOffHeapSize());
+        memstoreAccounting.getHeapSize(), memstoreAccounting.getOffHeapSize(),
+        memstoreAccounting.getCellsCount());
     }
     timeOfOldestEdit = Long.MAX_VALUE;
   }
@@ -259,7 +259,7 @@ public abstract class AbstractMemStore implements MemStore {
     int i = 1;
     try {
       for (Segment segment : getSegments()) {
-        buf.append("Segment (" + i + ") " + segment.toString() + "; ");
+        buf.append("Segment (").append(i).append(") ").append(segment.toString()).append("; ");
         i++;
       }
     } catch (IOException e){

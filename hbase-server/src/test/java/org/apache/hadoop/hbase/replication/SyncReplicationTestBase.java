@@ -17,8 +17,10 @@
  */
 package org.apache.hadoop.hbase.replication;
 
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -36,7 +38,7 @@ import org.apache.hadoop.hbase.StartMiniClusterOption;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.Waiter.ExplainingPredicate;
 import org.apache.hadoop.hbase.client.Admin;
-import org.apache.hadoop.hbase.client.ClusterConnection;
+import org.apache.hadoop.hbase.client.AsyncClusterConnection;
 import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Put;
@@ -51,6 +53,7 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.wal.WAL.Entry;
 import org.apache.hadoop.hbase.wal.WALEdit;
 import org.apache.hadoop.hbase.wal.WALKeyImpl;
+import org.apache.hadoop.ipc.RemoteException;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
@@ -103,8 +106,8 @@ public class SyncReplicationTestBase {
     ZK_UTIL.startMiniZKCluster();
     initTestingUtility(UTIL1, "/cluster1");
     initTestingUtility(UTIL2, "/cluster2");
-    StartMiniClusterOption option = StartMiniClusterOption.builder()
-        .numMasters(2).numRegionServers(3).numDataNodes(3).build();
+    StartMiniClusterOption option =
+      StartMiniClusterOption.builder().numMasters(2).numRegionServers(3).numDataNodes(3).build();
     UTIL1.startMiniCluster(option);
     UTIL2.startMiniCluster(option);
     TableDescriptor td =
@@ -217,16 +220,16 @@ public class SyncReplicationTestBase {
     return getRemoteWALDir(remoteWALDir, peerId);
   }
 
-  protected Path getRemoteWALDir(Path remoteWALDir, String peerId) {
+  protected final Path getRemoteWALDir(Path remoteWALDir, String peerId) {
     return new Path(remoteWALDir, peerId);
   }
 
-  protected Path getReplayRemoteWALs(Path remoteWALDir, String peerId) {
+  protected final Path getReplayRemoteWALs(Path remoteWALDir, String peerId) {
     return new Path(remoteWALDir, peerId + "-replay");
   }
 
-  protected void verifyRemovedPeer(String peerId, Path remoteWALDir, HBaseTestingUtility utility)
-      throws Exception {
+  protected final void verifyRemovedPeer(String peerId, Path remoteWALDir,
+      HBaseTestingUtility utility) throws Exception {
     ReplicationPeerStorage rps = ReplicationStorageFactory
       .getReplicationPeerStorage(utility.getZooKeeperWatcher(), utility.getConfiguration());
     try {
@@ -247,27 +250,50 @@ public class SyncReplicationTestBase {
     }
   }
 
-  protected void verifyReplicationRequestRejection(HBaseTestingUtility utility,
+  private void assertRejection(Throwable error) {
+    assertThat(error, instanceOf(DoNotRetryIOException.class));
+    assertTrue(error.getMessage().contains("Reject to apply to sink cluster"));
+    assertTrue(error.getMessage().contains(TABLE_NAME.toString()));
+  }
+
+  protected final void verifyReplicationRequestRejection(HBaseTestingUtility utility,
       boolean expectedRejection) throws Exception {
     HRegionServer regionServer = utility.getRSForFirstRegionInTable(TABLE_NAME);
-    ClusterConnection connection = regionServer.getClusterConnection();
+    AsyncClusterConnection connection = regionServer.getAsyncClusterConnection();
     Entry[] entries = new Entry[10];
     for (int i = 0; i < entries.length; i++) {
       entries[i] =
         new Entry(new WALKeyImpl(HConstants.EMPTY_BYTE_ARRAY, TABLE_NAME, 0), new WALEdit());
     }
     if (!expectedRejection) {
-      ReplicationProtbufUtil.replicateWALEntry(connection.getAdmin(regionServer.getServerName()),
-        entries, null, null, null);
+      ReplicationProtbufUtil.replicateWALEntry(
+        connection.getRegionServerAdmin(regionServer.getServerName()), entries, null, null, null);
     } else {
       try {
-        ReplicationProtbufUtil.replicateWALEntry(connection.getAdmin(regionServer.getServerName()),
-          entries, null, null, null);
+        ReplicationProtbufUtil.replicateWALEntry(
+          connection.getRegionServerAdmin(regionServer.getServerName()), entries, null, null, null);
         fail("Should throw IOException when sync-replication state is in A or DA");
+      } catch (RemoteException e) {
+        assertRejection(e.unwrapRemoteException());
       } catch (DoNotRetryIOException e) {
-        assertTrue(e.getMessage().contains("Reject to apply to sink cluster"));
-        assertTrue(e.getMessage().contains(TABLE_NAME.toString()));
+        assertRejection(e);
       }
     }
+  }
+
+  protected final void waitUntilDeleted(HBaseTestingUtility util, Path remoteWAL) throws Exception {
+    MasterFileSystem mfs = util.getMiniHBaseCluster().getMaster().getMasterFileSystem();
+    util.waitFor(30000, new ExplainingPredicate<Exception>() {
+
+      @Override
+      public boolean evaluate() throws Exception {
+        return !mfs.getWALFileSystem().exists(remoteWAL);
+      }
+
+      @Override
+      public String explainFailure() throws Exception {
+        return remoteWAL + " has not been deleted yet";
+      }
+    });
   }
 }

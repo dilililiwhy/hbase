@@ -57,6 +57,8 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
   public static final Bytes OWNER_KEY = TableDescriptorBuilder.OWNER_KEY;
   public static final String READONLY = TableDescriptorBuilder.READONLY;
   public static final String COMPACTION_ENABLED = TableDescriptorBuilder.COMPACTION_ENABLED;
+  public static final String SPLIT_ENABLED = TableDescriptorBuilder.SPLIT_ENABLED;
+  public static final String MERGE_ENABLED = TableDescriptorBuilder.MERGE_ENABLED;
   public static final String MEMSTORE_FLUSHSIZE = TableDescriptorBuilder.MEMSTORE_FLUSHSIZE;
   public static final String FLUSH_POLICY = TableDescriptorBuilder.FLUSH_POLICY;
   public static final String IS_ROOT = "IS_ROOT";
@@ -192,7 +194,7 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
    * @param value The value. If null, removes the setting.
    */
   public HTableDescriptor setValue(String key, String value) {
-    getDelegateeForModification().setValue(Bytes.toBytes(key), Bytes.toBytes(value));
+    getDelegateeForModification().setValue(key, value);
     return this;
   }
 
@@ -268,6 +270,49 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
    */
   public HTableDescriptor setCompactionEnabled(final boolean isEnable) {
     getDelegateeForModification().setCompactionEnabled(isEnable);
+    return this;
+  }
+
+  /**
+   * Check if the region split enable flag of the table is true. If flag is
+   * false then no split will be done.
+   *
+   * @return true if table region split enabled
+   */
+  @Override
+  public boolean isSplitEnabled() {
+    return delegatee.isSplitEnabled();
+  }
+
+  /**
+   * Setting the table region split enable flag.
+   *
+   * @param isEnable True if enable split.
+   */
+  public HTableDescriptor setSplitEnabled(final boolean isEnable) {
+    getDelegateeForModification().setSplitEnabled(isEnable);
+    return this;
+  }
+
+
+  /**
+   * Check if the region merge enable flag of the table is true. If flag is
+   * false then no merge will be done.
+   *
+   * @return true if table region merge enabled
+   */
+  @Override
+  public boolean isMergeEnabled() {
+    return delegatee.isMergeEnabled();
+  }
+
+  /**
+   * Setting the table region merge enable flag.
+   *
+   * @param isEnable True if enable merge.
+   */
+  public HTableDescriptor setMergeEnabled(final boolean isEnable) {
+    getDelegateeForModification().setMergeEnabled(isEnable);
     return this;
   }
 
@@ -496,6 +541,7 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
    * @return Name of this table and then a map of all of the column family
    * descriptors (with only the non-default column family attributes)
    */
+  @Override
   public String toStringCustomizedValues() {
     return delegatee.toStringCustomizedValues();
   }
@@ -552,9 +598,11 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
   /**
    * Returns an unmodifiable collection of all the {@link HColumnDescriptor}
    * of all the column families of the table.
-   * @deprecated Use {@link #getColumnFamilies}.
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Use {@link #getColumnFamilies()} instead.
    * @return Immutable collection of {@link HColumnDescriptor} of all the
    * column families.
+   * @see #getColumnFamilies()
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-18008">HBASE-18008</a>
    */
   @Deprecated
   public Collection<HColumnDescriptor> getFamilies() {
@@ -661,8 +709,9 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
    * of the table.
    *
    * @return Array of all the HColumnDescriptors of the current table
-   *
+   * @deprecated since 2.0.0 and will be removed in 3.0.0.
    * @see #getFamilies()
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-18008">HBASE-18008</a>
    */
   @Deprecated
   @Override
@@ -678,7 +727,10 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
    * @param column Column family name
    * @return Column descriptor for the passed family name or the family on
    * passed in column.
-   * @deprecated Use {@link #getColumnFamily(byte[])}.
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Use {@link #getColumnFamily(byte[])}
+   *   instead.
+   * @see #getColumnFamily(byte[])
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-18008">HBASE-18008</a>
    */
   @Deprecated
   public HColumnDescriptor getFamily(final byte[] column) {
@@ -811,12 +863,20 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
   public static final HTableDescriptor NAMESPACE_TABLEDESC
     = new HTableDescriptor(TableDescriptorBuilder.NAMESPACE_TABLEDESC);
 
+  /**
+   * @deprecated since 0.94.1
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-6188">HBASE-6188</a>
+   */
   @Deprecated
   public HTableDescriptor setOwner(User owner) {
     getDelegateeForModification().setOwner(owner);
     return this;
   }
 
+  /**
+   * @deprecated since 0.94.1
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-6188">HBASE-6188</a>
+   */
   // used by admin.rb:alter(table_name,*args) to update owner.
   @Deprecated
   public HTableDescriptor setOwnerString(String ownerString) {
@@ -824,6 +884,10 @@ public class HTableDescriptor implements TableDescriptor, Comparable<HTableDescr
     return this;
   }
 
+  /**
+   * @deprecated since 0.94.1
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-6188">HBASE-6188</a>
+   */
   @Override
   @Deprecated
   public String getOwnerString() {

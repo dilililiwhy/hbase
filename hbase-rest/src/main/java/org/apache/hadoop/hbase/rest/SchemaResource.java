@@ -1,5 +1,4 @@
-/*
- *
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -16,38 +15,36 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.rest;
 
 import java.io.IOException;
 import java.util.Map;
-
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.PUT;
 import javax.ws.rs.Produces;
+import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.CacheControl;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.ResponseBuilder;
 import javax.ws.rs.core.UriInfo;
 import javax.xml.namespace.QName;
-
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.TableExistsException;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.TableNotEnabledException;
 import org.apache.hadoop.hbase.TableNotFoundException;
-import org.apache.yetus.audience.InterfaceAudience;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hbase.client.Admin;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.rest.model.ColumnSchemaModel;
 import org.apache.hadoop.hbase.rest.model.TableSchemaModel;
+import org.apache.yetus.audience.InterfaceAudience;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @InterfaceAudience.Private
 public class SchemaResource extends ResourceBase {
@@ -64,21 +61,15 @@ public class SchemaResource extends ResourceBase {
 
   /**
    * Constructor
-   * @param tableResource
-   * @throws IOException
    */
   public SchemaResource(TableResource tableResource) throws IOException {
     super();
     this.tableResource = tableResource;
   }
 
-  private HTableDescriptor getTableSchema() throws IOException,
-      TableNotFoundException {
-    Table table = servlet.getTable(tableResource.getName());
-    try {
-      return table.getTableDescriptor();
-    } finally {
-      table.close();
+  private HTableDescriptor getTableSchema() throws IOException, TableNotFoundException {
+    try (Table table = servlet.getTable(tableResource.getName())) {
+      return new HTableDescriptor(table.getDescriptor());
     }
   }
 
@@ -123,7 +114,7 @@ public class SchemaResource extends ResourceBase {
       }
       if (admin.tableExists(name)) {
         admin.disableTable(name);
-        admin.modifyTable(name, htd);
+        admin.modifyTable(htd);
         admin.enableTable(name);
         servlet.getMetrics().incrementSucessfulPutRequests(1);
       } else try {
@@ -137,6 +128,7 @@ public class SchemaResource extends ResourceBase {
       }
       return Response.created(uriInfo.getAbsolutePath()).build();
     } catch (Exception e) {
+      LOG.info("Caught exception", e);
       servlet.getMetrics().incrementFailedPutRequests(1);
       return processException(e);
     }
@@ -150,7 +142,7 @@ public class SchemaResource extends ResourceBase {
         .build();
     }
     try {
-      HTableDescriptor htd = admin.getTableDescriptor(name);
+      HTableDescriptor htd = new HTableDescriptor(admin.getDescriptor(name));
       admin.disableTable(name);
       try {
         for (ColumnSchemaModel family: model.getColumns()) {
@@ -191,6 +183,10 @@ public class SchemaResource extends ResourceBase {
       }
     } catch (Exception e) {
       servlet.getMetrics().incrementFailedPutRequests(1);
+      // Avoid re-unwrapping the exception
+      if (e instanceof WebApplicationException) {
+        throw (WebApplicationException) e;
+      }
       return processException(e);
     }
   }

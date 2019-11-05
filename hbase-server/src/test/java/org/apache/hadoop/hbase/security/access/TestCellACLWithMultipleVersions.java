@@ -115,7 +115,7 @@ public class TestCellACLWithMultipleVersions extends SecureTestUtil {
     rsHost.createEnvironment(ac, Coprocessor.PRIORITY_HIGHEST, 1, conf);
 
     // Wait for the ACL table to become available
-    TEST_UTIL.waitTableEnabled(AccessControlLists.ACL_TABLE_NAME);
+    TEST_UTIL.waitTableEnabled(PermissionStorage.ACL_TABLE_NAME);
 
     // create a set of test users
     USER_OWNER = User.createUserForTesting(conf, "owner", new String[0]);
@@ -193,7 +193,7 @@ public class TestCellACLWithMultipleVersions extends SecureTestUtil {
       @Override
       public Object run() throws Exception {
         Get get = new Get(TEST_ROW);
-        get.setMaxVersions(10);
+        get.readVersions(10);
         try(Connection connection = ConnectionFactory.createConnection(conf);
             Table t = connection.getTable(TEST_TABLE.getTableName())) {
           return t.get(get).listCells();
@@ -205,7 +205,7 @@ public class TestCellACLWithMultipleVersions extends SecureTestUtil {
       @Override
       public Object run() throws Exception {
         Get get = new Get(TEST_ROW);
-        get.setMaxVersions(10);
+        get.readVersions(10);
         try(Connection connection = ConnectionFactory.createConnection(conf);
             Table t = connection.getTable(TEST_TABLE.getTableName())) {
           return t.get(get).listCells();
@@ -976,6 +976,6 @@ public class TestCellACLWithMultipleVersions extends SecureTestUtil {
       // Test deleted the table, no problem
       LOG.info("Test deleted table " + TEST_TABLE.getTableName());
     }
-    assertEquals(0, AccessControlLists.getTablePermissions(conf, TEST_TABLE.getTableName()).size());
+    assertEquals(0, PermissionStorage.getTablePermissions(conf, TEST_TABLE.getTableName()).size());
   }
 }

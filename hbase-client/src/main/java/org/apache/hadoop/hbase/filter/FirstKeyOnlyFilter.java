@@ -20,6 +20,7 @@ package org.apache.hadoop.hbase.filter;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Objects;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.yetus.audience.InterfaceAudience;
@@ -50,12 +51,6 @@ public class FirstKeyOnlyFilter extends FilterBase {
   public boolean filterRowKey(Cell cell) throws IOException {
     // Impl in FilterBase might do unnecessary copy for Off heap backed Cells.
     return false;
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -125,5 +120,15 @@ public class FirstKeyOnlyFilter extends FilterBase {
     if (!(o instanceof FirstKeyOnlyFilter)) return false;
 
     return true;
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hashCode(foundKV);
   }
 }

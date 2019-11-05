@@ -21,7 +21,6 @@ package org.apache.hadoop.hbase.filter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Objects;
 
 import org.apache.hadoop.hbase.ByteBufferExtendedCell;
 import org.apache.hadoop.hbase.Cell;
@@ -57,12 +56,6 @@ public class ColumnPrefixFilter extends FilterBase {
   public boolean filterRowKey(Cell cell) throws IOException {
     // Impl in FilterBase might do unnecessary copy for Off heap backed Cells.
     return false;
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -165,15 +158,11 @@ public class ColumnPrefixFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof ColumnPrefixFilter))) {
-      return false;
-    }
-    ColumnPrefixFilter f = (ColumnPrefixFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(Bytes.hashCode(this.getPrefix()));
+    return Bytes.hashCode(this.getPrefix());
   }
 }

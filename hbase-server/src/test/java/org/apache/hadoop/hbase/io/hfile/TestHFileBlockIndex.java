@@ -37,15 +37,19 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.CellBuilderType;
 import org.apache.hadoop.hbase.CellComparatorImpl;
 import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.ExtendedCellBuilderFactory;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseCommonTestingUtility;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValueUtil;
 import org.apache.hadoop.hbase.PrivateCellUtil;
 import org.apache.hadoop.hbase.fs.HFileSystem;
+import org.apache.hadoop.hbase.io.ByteBuffAllocator;
 import org.apache.hadoop.hbase.io.compress.Compression;
 import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
@@ -175,10 +179,6 @@ public class TestHFileBlockIndex {
     }
 
     @Override
-    public void returnBlock(HFileBlock block) {
-    }
-
-    @Override
     public HFileBlock readBlock(long offset, long onDiskSize,
         boolean cacheBlock, boolean pread, boolean isCompaction,
         boolean updateCacheMetrics, BlockType expectedBlockType,
@@ -191,7 +191,7 @@ public class TestHFileBlockIndex {
       }
 
       missCount += 1;
-      prevBlock = realReader.readBlockData(offset, onDiskSize, pread, false);
+      prevBlock = realReader.readBlockData(offset, onDiskSize, pread, false, true);
       prevOffset = offset;
       prevOnDiskSize = onDiskSize;
       prevPread = pread;
@@ -202,7 +202,7 @@ public class TestHFileBlockIndex {
 
   private void readIndex(boolean useTags) throws IOException {
     long fileSize = fs.getFileStatus(path).getLen();
-    LOG.info("Size of " + path + ": " + fileSize);
+    LOG.info("Size of {}: {} compression={}", path, fileSize, compr.toString());
 
     FSDataInputStream istream = fs.open(path);
     HFileContext meta = new HFileContextBuilder()
@@ -211,8 +211,8 @@ public class TestHFileBlockIndex {
                         .withIncludesTags(useTags)
                         .withCompression(compr)
                         .build();
-    HFileBlock.FSReader blockReader = new HFileBlock.FSReaderImpl(istream, fs.getFileStatus(path)
-        .getLen(), meta);
+    HFileBlock.FSReader blockReader = new HFileBlock.FSReaderImpl(istream,
+        fs.getFileStatus(path).getLen(), meta, ByteBuffAllocator.HEAP);
 
     BlockReaderWrapper brw = new BlockReaderWrapper(blockReader);
     HFileBlockIndex.BlockIndexReader indexReader =
@@ -276,7 +276,7 @@ public class TestHFileBlockIndex {
         new HFileBlockIndex.BlockIndexWriter(hbw, null, null);
 
     for (int i = 0; i < NUM_DATA_BLOCKS; ++i) {
-      hbw.startWriting(BlockType.DATA).write(String.valueOf(rand.nextInt(1000)).getBytes());
+      hbw.startWriting(BlockType.DATA).write(Bytes.toBytes(String.valueOf(rand.nextInt(1000))));
       long blockOffset = outputStream.getPos();
       hbw.writeHeaderAndData(outputStream);
 
@@ -524,67 +524,58 @@ public class TestHFileBlockIndex {
   * @throws IOException
   */
   @Test
- public void testMidKeyOnLeafIndexBlockBoundary() throws IOException {
-   Path hfilePath = new Path(TEST_UTIL.getDataTestDir(),
-       "hfile_for_midkey");
-   int maxChunkSize = 512;
-   conf.setInt(HFileBlockIndex.MAX_CHUNK_SIZE_KEY, maxChunkSize);
-   // should open hfile.block.index.cacheonwrite
-   conf.setBoolean(CacheConfig.CACHE_INDEX_BLOCKS_ON_WRITE_KEY, true);
+  public void testMidKeyOnLeafIndexBlockBoundary() throws IOException {
+    Path hfilePath = new Path(TEST_UTIL.getDataTestDir(), "hfile_for_midkey");
+    int maxChunkSize = 512;
+    conf.setInt(HFileBlockIndex.MAX_CHUNK_SIZE_KEY, maxChunkSize);
+    // should open hfile.block.index.cacheonwrite
+    conf.setBoolean(CacheConfig.CACHE_INDEX_BLOCKS_ON_WRITE_KEY, true);
+    CacheConfig cacheConf = new CacheConfig(conf, BlockCacheFactory.createBlockCache(conf));
+    BlockCache blockCache = cacheConf.getBlockCache().get();
+    // Evict all blocks that were cached-on-write by the previous invocation.
+    blockCache.evictBlocksByHfileName(hfilePath.getName());
+    // Write the HFile
+    HFileContext meta =
+        new HFileContextBuilder().withBlockSize(SMALL_BLOCK_SIZE).withCompression(Algorithm.NONE)
+            .withDataBlockEncoding(DataBlockEncoding.NONE).build();
+    HFile.Writer writer =
+        HFile.getWriterFactory(conf, cacheConf).withPath(fs, hfilePath).withFileContext(meta)
+            .create();
+    Random rand = new Random(19231737);
+    byte[] family = Bytes.toBytes("f");
+    byte[] qualifier = Bytes.toBytes("q");
+    int kvNumberToBeWritten = 16;
+    // the new generated hfile will contain 2 leaf-index blocks and 16 data blocks,
+    // midkey is just on the boundary of the first leaf-index block
+    for (int i = 0; i < kvNumberToBeWritten; ++i) {
+      byte[] row = RandomKeyValueUtil.randomOrderedFixedLengthKey(rand, i, 30);
 
-   CacheConfig cacheConf = new CacheConfig(conf);
-   BlockCache blockCache = cacheConf.getBlockCache();
-   // Evict all blocks that were cached-on-write by the previous invocation.
-   blockCache.evictBlocksByHfileName(hfilePath.getName());
-   // Write the HFile
-   {
-     HFileContext meta = new HFileContextBuilder()
-                         .withBlockSize(SMALL_BLOCK_SIZE)
-                         .withCompression(Algorithm.NONE)
-                         .withDataBlockEncoding(DataBlockEncoding.NONE)
-                         .build();
-     HFile.Writer writer =
-           HFile.getWriterFactory(conf, cacheConf)
-               .withPath(fs, hfilePath)
-               .withFileContext(meta)
-               .create();
-     Random rand = new Random(19231737);
-     byte[] family = Bytes.toBytes("f");
-     byte[] qualifier = Bytes.toBytes("q");
-     int kvNumberToBeWritten = 16;
-     // the new generated hfile will contain 2 leaf-index blocks and 16 data blocks,
-     // midkey is just on the boundary of the first leaf-index block
-     for (int i = 0; i < kvNumberToBeWritten; ++i) {
-       byte[] row = RandomKeyValueUtil.randomOrderedFixedLengthKey(rand, i, 30);
+      // Key will be interpreted by KeyValue.KEY_COMPARATOR
+      KeyValue kv = new KeyValue(row, family, qualifier, EnvironmentEdgeManager.currentTime(),
+          RandomKeyValueUtil.randomFixedLengthValue(rand, SMALL_BLOCK_SIZE));
+      writer.append(kv);
+    }
+    writer.close();
 
-       // Key will be interpreted by KeyValue.KEY_COMPARATOR
-       KeyValue kv =
-             new KeyValue(row, family, qualifier, EnvironmentEdgeManager.currentTime(),
-                 RandomKeyValueUtil.randomFixedLengthValue(rand, SMALL_BLOCK_SIZE));
-       writer.append(kv);
-     }
-     writer.close();
-   }
+    // close hfile.block.index.cacheonwrite
+    conf.setBoolean(CacheConfig.CACHE_INDEX_BLOCKS_ON_WRITE_KEY, false);
 
-   // close hfile.block.index.cacheonwrite
-   conf.setBoolean(CacheConfig.CACHE_INDEX_BLOCKS_ON_WRITE_KEY, false);
+    // Read the HFile
+    HFile.Reader reader = HFile.createReader(fs, hfilePath, cacheConf, true, conf);
 
-   // Read the HFile
-   HFile.Reader reader = HFile.createReader(fs, hfilePath, cacheConf, true, conf);
+    boolean hasArrayIndexOutOfBoundsException = false;
+    try {
+      // get the mid-key.
+      reader.midKey();
+    } catch (ArrayIndexOutOfBoundsException e) {
+      hasArrayIndexOutOfBoundsException = true;
+    } finally {
+      reader.close();
+    }
 
-   boolean hasArrayIndexOutOfBoundsException = false;
-   try {
-     // get the mid-key.
-     reader.midKey();
-   } catch (ArrayIndexOutOfBoundsException e) {
-     hasArrayIndexOutOfBoundsException = true;
-   } finally {
-     reader.close();
-   }
-
-   // to check if ArrayIndexOutOfBoundsException occurred
-   assertFalse(hasArrayIndexOutOfBoundsException);
- }
+    // to check if ArrayIndexOutOfBoundsException occurred
+    assertFalse(hasArrayIndexOutOfBoundsException);
+  }
 
   /**
    * Testing block index through the HFile writer/reader APIs. Allows to test
@@ -597,8 +588,8 @@ public class TestHFileBlockIndex {
   public void testHFileWriterAndReader() throws IOException {
     Path hfilePath = new Path(TEST_UTIL.getDataTestDir(),
         "hfile_for_block_index");
-    CacheConfig cacheConf = new CacheConfig(conf);
-    BlockCache blockCache = cacheConf.getBlockCache();
+    CacheConfig cacheConf = new CacheConfig(conf, BlockCacheFactory.createBlockCache(conf));
+    BlockCache blockCache = cacheConf.getBlockCache().get();
 
     for (int testI = 0; testI < INDEX_CHUNK_SIZES.length; ++testI) {
       int indexBlockSize = INDEX_CHUNK_SIZES[testI];
@@ -775,7 +766,13 @@ public class TestHFileBlockIndex {
       byte[] b = Bytes.toBytes(i);
       System.arraycopy(b, 0, rowkey, rowkey.length - b.length, b.length);
       keys.add(rowkey);
-      hfw.append(CellUtil.createCell(rowkey));
+      hfw.append(ExtendedCellBuilderFactory.create(CellBuilderType.DEEP_COPY)
+        .setRow(rowkey).setFamily(HConstants.EMPTY_BYTE_ARRAY)
+        .setQualifier(HConstants.EMPTY_BYTE_ARRAY)
+        .setTimestamp(HConstants.LATEST_TIMESTAMP)
+        .setType(KeyValue.Type.Maximum.getCode())
+        .setValue(HConstants.EMPTY_BYTE_ARRAY)
+        .build());
     }
     hfw.close();
 
@@ -783,7 +780,13 @@ public class TestHFileBlockIndex {
     // Scanner doesn't do Cells yet.  Fix.
     HFileScanner scanner = reader.getScanner(true, true);
     for (int i = 0; i < keys.size(); ++i) {
-      scanner.seekTo(CellUtil.createCell(keys.get(i)));
+      scanner.seekTo(ExtendedCellBuilderFactory.create(CellBuilderType.DEEP_COPY)
+        .setRow(keys.get(i)).setFamily(HConstants.EMPTY_BYTE_ARRAY)
+        .setQualifier(HConstants.EMPTY_BYTE_ARRAY)
+        .setTimestamp(HConstants.LATEST_TIMESTAMP)
+        .setType(KeyValue.Type.Maximum.getCode())
+        .setValue(HConstants.EMPTY_BYTE_ARRAY)
+        .build());
     }
     reader.close();
   }

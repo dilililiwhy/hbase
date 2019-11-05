@@ -16,12 +16,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.filter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Objects;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CompareOperator;
@@ -46,19 +44,6 @@ import org.apache.hbase.thirdparty.com.google.protobuf.InvalidProtocolBufferExce
  */
 @InterfaceAudience.Public
 public class ValueFilter extends CompareFilter {
-
-  /**
-   * Constructor.
-   * @param valueCompareOp the compare op for value matching
-   * @param valueComparator the comparator for value matching
-   * @deprecated Since 2.0.0. Will be removed in 3.0.0.
-   * Use {@link #ValueFilter(CompareOperator, ByteArrayComparable)}
-   */
-  public ValueFilter(final CompareOp valueCompareOp,
-      final ByteArrayComparable valueComparator) {
-    super(valueCompareOp, valueComparator);
-  }
-
   /**
    * Constructor.
    * @param valueCompareOp the compare op for value matching
@@ -67,12 +52,6 @@ public class ValueFilter extends CompareFilter {
   public ValueFilter(final CompareOperator valueCompareOp,
                      final ByteArrayComparable valueComparator) {
     super(valueCompareOp, valueComparator);
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -143,15 +122,11 @@ public class ValueFilter extends CompareFilter {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof ValueFilter))) {
-      return false;
-    }
-    ValueFilter f = (ValueFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(this.getComparator(), this.getCompareOperator());
+    return super.hashCode();
   }
 }

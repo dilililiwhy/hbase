@@ -57,7 +57,7 @@ import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.Waiter;
-import org.apache.hadoop.hbase.client.ClusterConnection;
+import org.apache.hadoop.hbase.client.AsyncClusterConnection;
 import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.RegionInfo;
@@ -88,7 +88,6 @@ import org.apache.hadoop.hbase.wal.WAL;
 import org.apache.hadoop.hbase.wal.WALEdit;
 import org.apache.hadoop.hbase.wal.WALFactory;
 import org.apache.hadoop.hbase.wal.WALKeyImpl;
-import org.apache.hadoop.hbase.zookeeper.MetaTableLocator;
 import org.apache.hadoop.hbase.zookeeper.ZKClusterId;
 import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 import org.apache.hadoop.hbase.zookeeper.ZKWatcher;
@@ -301,11 +300,9 @@ public abstract class TestReplicationSourceManager {
         wal.rollWriter();
       }
       LOG.info(Long.toString(i));
-      final long txid = wal.append(
-          hri,
-          new WALKeyImpl(hri.getEncodedNameAsBytes(), test, System.currentTimeMillis(), mvcc, scopes),
-          edit,
-          true);
+      final long txid = wal.appendData(hri,
+        new WALKeyImpl(hri.getEncodedNameAsBytes(), test, System.currentTimeMillis(), mvcc, scopes),
+        edit);
       wal.sync(txid);
     }
 
@@ -317,9 +314,9 @@ public abstract class TestReplicationSourceManager {
     LOG.info(baseline + " and " + time);
 
     for (int i = 0; i < 3; i++) {
-      wal.append(hri,
+      wal.appendData(hri,
         new WALKeyImpl(hri.getEncodedNameAsBytes(), test, System.currentTimeMillis(), mvcc, scopes),
-        edit, true);
+        edit);
     }
     wal.sync();
 
@@ -339,9 +336,9 @@ public abstract class TestReplicationSourceManager {
     manager.logPositionAndCleanOldLogs(source,
       new WALEntryBatch(0, manager.getSources().get(0).getCurrentPath()));
 
-    wal.append(hri,
+    wal.appendData(hri,
       new WALKeyImpl(hri.getEncodedNameAsBytes(), test, System.currentTimeMillis(), mvcc, scopes),
-      edit, true);
+      edit);
     wal.sync();
 
     assertEquals(1, manager.getWALs().size());
@@ -646,6 +643,22 @@ public abstract class TestReplicationSourceManager {
     }
   }
 
+  @Test
+  public void testSameWALPrefix() throws IOException {
+    Set<String> latestWalsBefore =
+      manager.getLastestPath().stream().map(Path::getName).collect(Collectors.toSet());
+    String walName1 = "localhost,8080,12345-45678-Peer.34567";
+    String walName2 = "localhost,8080,12345.56789";
+    manager.preLogRoll(new Path(walName1));
+    manager.preLogRoll(new Path(walName2));
+
+    Set<String> latestWals = manager.getLastestPath().stream().map(Path::getName)
+      .filter(n -> !latestWalsBefore.contains(n)).collect(Collectors.toSet());
+    assertEquals(2, latestWals.size());
+    assertTrue(latestWals.contains(walName1));
+    assertTrue(latestWals.contains(walName2));
+  }
+
   /**
    * Add a peer and wait for it to initialize
    * @param waitForSource Whether to wait for replication source to initialize
@@ -836,13 +849,9 @@ public abstract class TestReplicationSourceManager {
     public CoordinatedStateManager getCoordinatedStateManager() {
       return null;
     }
-    @Override
-    public ClusterConnection getConnection() {
-      return null;
-    }
 
     @Override
-    public MetaTableLocator getMetaTableLocator() {
+    public Connection getConnection() {
       return null;
     }
 
@@ -877,12 +886,6 @@ public abstract class TestReplicationSourceManager {
     }
 
     @Override
-    public ClusterConnection getClusterConnection() {
-      // TODO Auto-generated method stub
-      return null;
-    }
-
-    @Override
     public FileSystem getFileSystem() {
       return null;
     }
@@ -894,6 +897,11 @@ public abstract class TestReplicationSourceManager {
 
     @Override
     public Connection createConnection(Configuration conf) throws IOException {
+      return null;
+    }
+
+    @Override
+    public AsyncClusterConnection getAsyncClusterConnection() {
       return null;
     }
   }

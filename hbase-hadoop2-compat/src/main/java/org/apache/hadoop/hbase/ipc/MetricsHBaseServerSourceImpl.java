@@ -152,6 +152,8 @@ public class MetricsHBaseServerSourceImpl extends ExceptionTrackingSourceImpl
               REPLICATION_QUEUE_DESC), wrapper.getReplicationQueueLength())
           .addGauge(Interns.info(PRIORITY_QUEUE_NAME, PRIORITY_QUEUE_DESC),
               wrapper.getPriorityQueueLength())
+          .addGauge(Interns.info(METAPRIORITY_QUEUE_NAME, METAPRIORITY_QUEUE_DESC),
+              wrapper.getMetaPriorityQueueLength())
           .addGauge(Interns.info(NUM_OPEN_CONNECTIONS_NAME,
               NUM_OPEN_CONNECTIONS_DESC), wrapper.getNumOpenConnections())
           .addGauge(Interns.info(NUM_ACTIVE_HANDLER_NAME,
@@ -179,7 +181,9 @@ public class MetricsHBaseServerSourceImpl extends ExceptionTrackingSourceImpl
           .addGauge(Interns.info(NUM_ACTIVE_READ_HANDLER_NAME, NUM_ACTIVE_READ_HANDLER_DESC),
             wrapper.getActiveReadRpcHandlerCount())
           .addGauge(Interns.info(NUM_ACTIVE_SCAN_HANDLER_NAME, NUM_ACTIVE_SCAN_HANDLER_DESC),
-            wrapper.getActiveScanRpcHandlerCount());
+            wrapper.getActiveScanRpcHandlerCount())
+          .addGauge(Interns.info(NETTY_DM_USAGE_NAME, NETTY_DM_USAGE_DESC),
+            wrapper.getNettyDmUsage());
     }
 
     metricsRegistry.snapshot(mrb, all);

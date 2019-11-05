@@ -36,7 +36,10 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.ColumnFamilyDescriptor;
 import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
+import org.apache.log4j.Level;
+import org.apache.log4j.LogManager;
 import org.apache.yetus.audience.InterfaceAudience;
+import org.apache.zookeeper.ZooKeeper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hbase.client.Admin;
@@ -113,7 +116,10 @@ public class LoadTestTool extends AbstractHBaseTool {
   protected static final String OPT_USAGE_COMPRESSION = "Compression type, " +
       "one of " + Arrays.toString(Compression.Algorithm.values());
 
+  protected static final String OPT_VERBOSE = "verbose";
+
   public static final String OPT_BLOOM = "bloom";
+  public static final String OPT_BLOOM_PARAM = "bloom_param";
   public static final String OPT_COMPRESSION = "compression";
   public static final String OPT_DEFERRED_LOG_FLUSH = "deferredlogflush";
   public static final String OPT_DEFERRED_LOG_FLUSH_USAGE = "Enable deferred log flush.";
@@ -186,7 +192,7 @@ public class LoadTestTool extends AbstractHBaseTool {
 
   protected long startKey, endKey;
 
-  protected boolean isWrite, isRead, isUpdate;
+  protected boolean isVerbose, isWrite, isRead, isUpdate;
   protected boolean deferredLogFlush;
 
   // Column family options
@@ -314,6 +320,7 @@ public class LoadTestTool extends AbstractHBaseTool {
 
   @Override
   protected void addOptions() {
+    addOptNoArg("v", OPT_VERBOSE, "Will display a full readout of logs, including ZooKeeper");
     addOptWithArg(OPT_ZK_QUORUM, "ZK quorum as comma-separated host names " +
         "without port numbers");
     addOptWithArg(OPT_ZK_PARENT_NODE, "name of parent znode in zookeeper");
@@ -324,6 +331,7 @@ public class LoadTestTool extends AbstractHBaseTool {
     addOptWithArg(OPT_UPDATE, OPT_USAGE_UPDATE);
     addOptNoArg(OPT_INIT_ONLY, "Initialize the test table only, don't do any loading");
     addOptWithArg(OPT_BLOOM, OPT_USAGE_BLOOM);
+    addOptWithArg(OPT_BLOOM_PARAM, "the parameter of bloom filter type");
     addOptWithArg(OPT_COMPRESSION, OPT_USAGE_COMPRESSION);
     addOptWithArg(HFileTestUtil.OPT_DATA_BLOCK_ENCODING, HFileTestUtil.OPT_DATA_BLOCK_ENCODING_USAGE);
     addOptWithArg(OPT_MAX_READ_ERRORS, "The maximum number of read errors " +
@@ -416,6 +424,7 @@ public class LoadTestTool extends AbstractHBaseTool {
       families = HFileTestUtil.DEFAULT_COLUMN_FAMILIES;
     }
 
+    isVerbose = cmd.hasOption(OPT_VERBOSE);
     isWrite = cmd.hasOption(OPT_WRITE);
     isRead = cmd.hasOption(OPT_READ);
     isUpdate = cmd.hasOption(OPT_UPDATE);
@@ -544,6 +553,14 @@ public class LoadTestTool extends AbstractHBaseTool {
     bloomType = bloomStr == null ? BloomType.ROW :
         BloomType.valueOf(bloomStr);
 
+    if (bloomType == BloomType.ROWPREFIX_FIXED_LENGTH) {
+      if (!cmd.hasOption(OPT_BLOOM_PARAM)) {
+        LOG.error("the parameter of bloom filter {} is not specified", bloomType.name());
+      } else {
+        conf.set(BloomFilterUtil.PREFIX_LENGTH_KEY, cmd.getOptionValue(OPT_BLOOM_PARAM));
+      }
+    }
+
     inMemoryCF = cmd.hasOption(OPT_INMEMORY);
     if (cmd.hasOption(OPT_ENCRYPTION)) {
       cipher = Encryption.getCipher(conf, cmd.getOptionValue(OPT_ENCRYPTION));
@@ -565,6 +582,9 @@ public class LoadTestTool extends AbstractHBaseTool {
 
   @Override
   protected int doWork() throws IOException {
+    if (!isVerbose) {
+        LogManager.getLogger(ZooKeeper.class.getName()).setLevel(Level.WARN);
+    }
     if (numTables > 1) {
       return parallelLoadTables();
     } else {

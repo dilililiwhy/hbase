@@ -18,19 +18,21 @@
  */
 package org.apache.hadoop.hbase.client;
 
+import static org.apache.hadoop.hbase.util.FutureUtils.addListener;
+
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.security.PrivilegedExceptionAction;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.AuthUtil;
 import org.apache.hadoop.hbase.HBaseConfiguration;
-import org.apache.yetus.audience.InterfaceAudience;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.UserProvider;
+import org.apache.hadoop.hbase.util.FutureUtils;
 import org.apache.hadoop.hbase.util.ReflectionUtils;
+import org.apache.yetus.audience.InterfaceAudience;
 
 /**
  * A non-instantiable class that manages creation of {@link Connection}s. Managing the lifecycle of
@@ -210,25 +212,22 @@ public class ConnectionFactory {
    * @return Connection object for <code>conf</code>
    */
   public static Connection createConnection(Configuration conf, ExecutorService pool,
-    final User user) throws IOException {
-    String className = conf.get(ClusterConnection.HBASE_CLIENT_CONNECTION_IMPL,
-      ConnectionImplementation.class.getName());
-    Class<?> clazz;
-    try {
-      clazz = Class.forName(className);
-    } catch (ClassNotFoundException e) {
-      throw new IOException(e);
-    }
-    try {
-      // Default HCM#HCI is not accessible; make it so before invoking.
-      Constructor<?> constructor = clazz.getDeclaredConstructor(Configuration.class,
-        ExecutorService.class, User.class);
-      constructor.setAccessible(true);
-      return user.runAs(
-        (PrivilegedExceptionAction<Connection>)() ->
-          (Connection) constructor.newInstance(conf, pool, user));
-    } catch (Exception e) {
-      throw new IOException(e);
+      final User user) throws IOException {
+    Class<?> clazz = conf.getClass(ConnectionUtils.HBASE_CLIENT_CONNECTION_IMPL,
+      ConnectionOverAsyncConnection.class, Connection.class);
+    if (clazz != ConnectionOverAsyncConnection.class) {
+      try {
+        // Default HCM#HCI is not accessible; make it so before invoking.
+        Constructor<?> constructor =
+          clazz.getDeclaredConstructor(Configuration.class, ExecutorService.class, User.class);
+        constructor.setAccessible(true);
+        return user.runAs((PrivilegedExceptionAction<Connection>) () -> (Connection) constructor
+          .newInstance(conf, pool, user));
+      } catch (Exception e) {
+        throw new IOException(e);
+      }
+    } else {
+      return FutureUtils.get(createAsyncConnection(conf, user)).toConnection();
     }
   }
 
@@ -276,18 +275,19 @@ public class ConnectionFactory {
    * @param conf configuration
    * @param user the user the asynchronous connection is for
    * @return AsyncConnection object wrapped by CompletableFuture
-   * @throws IOException
    */
   public static CompletableFuture<AsyncConnection> createAsyncConnection(Configuration conf,
       final User user) {
     CompletableFuture<AsyncConnection> future = new CompletableFuture<>();
     AsyncRegistry registry = AsyncRegistryFactory.getRegistry(conf);
-    registry.getClusterId().whenComplete((clusterId, error) -> {
+    addListener(registry.getClusterId(), (clusterId, error) -> {
       if (error != null) {
+        registry.close();
         future.completeExceptionally(error);
         return;
       }
       if (clusterId == null) {
+        registry.close();
         future.completeExceptionally(new IOException("clusterid came back null"));
         return;
       }
@@ -295,10 +295,10 @@ public class ConnectionFactory {
         AsyncConnectionImpl.class, AsyncConnection.class);
       try {
         future.complete(
-          user.runAs((PrivilegedExceptionAction<? extends AsyncConnection>)() ->
-            ReflectionUtils.newInstance(clazz, conf, registry, clusterId, user))
-        );
+          user.runAs((PrivilegedExceptionAction<? extends AsyncConnection>) () -> ReflectionUtils
+            .newInstance(clazz, conf, registry, clusterId, null, user)));
       } catch (Exception e) {
+        registry.close();
         future.completeExceptionally(e);
       }
     });

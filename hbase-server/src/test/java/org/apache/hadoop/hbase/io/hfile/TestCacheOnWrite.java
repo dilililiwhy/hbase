@@ -31,6 +31,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -39,10 +40,11 @@ import org.apache.hadoop.hbase.CellComparatorImpl;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseCommonTestingUtility;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
-import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.Tag;
+import org.apache.hadoop.hbase.client.ColumnFamilyDescriptor;
+import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
 import org.apache.hadoop.hbase.client.Durability;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.fs.HFileSystem;
@@ -51,7 +53,6 @@ import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.io.hfile.bucket.BucketCache;
 import org.apache.hadoop.hbase.regionserver.BloomType;
 import org.apache.hadoop.hbase.regionserver.HRegion;
-import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.regionserver.StoreFileWriter;
 import org.apache.hadoop.hbase.testclassification.IOTests;
 import org.apache.hadoop.hbase.testclassification.LargeTests;
@@ -59,6 +60,7 @@ import org.apache.hadoop.hbase.util.BloomFilterFactory;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ChecksumType;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
+import org.apache.hadoop.hbase.util.Pair;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -111,7 +113,7 @@ public class TestCacheOnWrite {
   private static final int NUM_VALID_KEY_TYPES =
       KeyValue.Type.values().length - 2;
 
-  private static enum CacheOnWriteType {
+  private enum CacheOnWriteType {
     DATA_BLOCKS(CacheConfig.CACHE_BLOCKS_ON_WRITE_KEY,
         BlockType.DATA, BlockType.ENCODED_DATA),
     BLOOM_BLOCKS(CacheConfig.CACHE_BLOOM_BLOCKS_ON_WRITE_KEY,
@@ -123,12 +125,11 @@ public class TestCacheOnWrite {
     private final BlockType blockType1;
     private final BlockType blockType2;
 
-    private CacheOnWriteType(String confKey, BlockType blockType) {
+    CacheOnWriteType(String confKey, BlockType blockType) {
       this(confKey, blockType, blockType);
     }
 
-    private CacheOnWriteType(String confKey, BlockType blockType1,
-        BlockType blockType2) {
+    CacheOnWriteType(String confKey, BlockType blockType1, BlockType blockType2) {
       this.blockType1 = blockType1;
       this.blockType2 = blockType2;
       this.confKey = confKey;
@@ -160,7 +161,7 @@ public class TestCacheOnWrite {
     Configuration conf = TEST_UTIL.getConfiguration();
     List<BlockCache> blockcaches = new ArrayList<>();
     // default
-    blockcaches.add(new CacheConfig(conf).getBlockCache());
+    blockcaches.add(BlockCacheFactory.createBlockCache(conf));
 
     //set LruBlockCache.LRU_HARD_CAPACITY_LIMIT_FACTOR_CONFIG_NAME to 2.0f due to HBASE-16287
     TEST_UTIL.getConfiguration().setFloat(LruBlockCache.LRU_HARD_CAPACITY_LIMIT_FACTOR_CONFIG_NAME, 2.0f);
@@ -223,17 +224,16 @@ public class TestCacheOnWrite {
     conf = TEST_UTIL.getConfiguration();
     this.conf.set("dfs.datanode.data.dir.perm", "700");
     conf.setInt(HFileBlockIndex.MAX_CHUNK_SIZE_KEY, INDEX_BLOCK_SIZE);
-    conf.setInt(BloomFilterFactory.IO_STOREFILE_BLOOM_BLOCK_SIZE,
-        BLOOM_BLOCK_SIZE);
+    conf.setInt(BloomFilterFactory.IO_STOREFILE_BLOOM_BLOCK_SIZE, BLOOM_BLOCK_SIZE);
     conf.setBoolean(CacheConfig.CACHE_DATA_BLOCKS_COMPRESSED_KEY, cacheCompressedData);
     cowType.modifyConf(conf);
+    conf.setBoolean(CacheConfig.CACHE_BLOCKS_ON_WRITE_KEY, cowType.shouldBeCached(BlockType.DATA));
+    conf.setBoolean(CacheConfig.CACHE_INDEX_BLOCKS_ON_WRITE_KEY,
+        cowType.shouldBeCached(BlockType.LEAF_INDEX));
+    conf.setBoolean(CacheConfig.CACHE_BLOOM_BLOCKS_ON_WRITE_KEY,
+        cowType.shouldBeCached(BlockType.BLOOM_CHUNK));
+    cacheConf = new CacheConfig(conf, blockCache);
     fs = HFileSystem.get(conf);
-    CacheConfig.GLOBAL_BLOCK_CACHE_INSTANCE = blockCache;
-    cacheConf =
-        new CacheConfig(blockCache, true, true, cowType.shouldBeCached(BlockType.DATA),
-        cowType.shouldBeCached(BlockType.LEAF_INDEX),
-        cowType.shouldBeCached(BlockType.BLOOM_CHUNK), false, cacheCompressedData,
-            false, false);
   }
 
   @After
@@ -269,18 +269,17 @@ public class TestCacheOnWrite {
 
     DataBlockEncoding encodingInCache = NoOpDataBlockEncoder.INSTANCE.getDataBlockEncoding();
     List<Long> cachedBlocksOffset = new ArrayList<>();
-    Map<Long, HFileBlock> cachedBlocks = new HashMap<>();
+    Map<Long, Pair<HFileBlock, HFileBlock>> cachedBlocks = new HashMap<>();
     while (offset < reader.getTrailer().getLoadOnOpenDataOffset()) {
       // Flags: don't cache the block, use pread, this is not a compaction.
       // Also, pass null for expected block type to avoid checking it.
       HFileBlock block = reader.readBlock(offset, -1, false, true, false, true, null,
           encodingInCache);
-      BlockCacheKey blockCacheKey = new BlockCacheKey(reader.getName(),
-          offset);
+      BlockCacheKey blockCacheKey = new BlockCacheKey(reader.getName(), offset);
       HFileBlock fromCache = (HFileBlock) blockCache.getBlock(blockCacheKey, true, false, true);
       boolean isCached = fromCache != null;
       cachedBlocksOffset.add(offset);
-      cachedBlocks.put(offset, fromCache);
+      cachedBlocks.put(offset, fromCache == null ? null : Pair.newPair(block, fromCache));
       boolean shouldBeCached = cowType.shouldBeCached(block.getBlockType());
       assertTrue("shouldBeCached: " + shouldBeCached+ "\n" +
           "isCached: " + isCached + "\n" +
@@ -332,19 +331,20 @@ public class TestCacheOnWrite {
       Long entry = iterator.next();
       BlockCacheKey blockCacheKey = new BlockCacheKey(reader.getName(),
           entry);
-      HFileBlock hFileBlock = cachedBlocks.get(entry);
-      if (hFileBlock != null) {
-        // call return twice because for the isCache cased the counter would have got incremented
-        // twice
-        blockCache.returnBlock(blockCacheKey, hFileBlock);
-        if(cacheCompressedData) {
+      Pair<HFileBlock, HFileBlock> blockPair = cachedBlocks.get(entry);
+      if (blockPair != null) {
+        // Call return twice because for the isCache cased the counter would have got incremented
+        // twice. Notice that here we need to returnBlock with different blocks. see comments in
+        // BucketCache#returnBlock.
+        blockPair.getSecond().release();
+        if (cacheCompressedData) {
           if (this.compress == Compression.Algorithm.NONE
               || cowType == CacheOnWriteType.INDEX_BLOCKS
               || cowType == CacheOnWriteType.BLOOM_BLOCKS) {
-            blockCache.returnBlock(blockCacheKey, hFileBlock);
+            blockPair.getFirst().release();
           }
         } else {
-          blockCache.returnBlock(blockCacheKey, hFileBlock);
+          blockPair.getFirst().release();
         }
       }
     }
@@ -392,11 +392,11 @@ public class TestCacheOnWrite {
         tags[0] = t;
         kv =
             new KeyValue(row, 0, row.length, cf, 0, cf.length, qualifier, 0, qualifier.length,
-                rand.nextLong(), generateKeyType(rand), value, 0, value.length, tagList);
+                Math.abs(rand.nextLong()), generateKeyType(rand), value, 0, value.length, tagList);
       } else {
         kv =
             new KeyValue(row, 0, row.length, cf, 0, cf.length, qualifier, 0, qualifier.length,
-                rand.nextLong(), generateKeyType(rand), value, 0, value.length);
+                Math.abs(rand.nextLong()), generateKeyType(rand), value, 0, value.length);
       }
       sfw.append(kv);
     }
@@ -414,13 +414,11 @@ public class TestCacheOnWrite {
     final String cf = "myCF";
     final byte[] cfBytes = Bytes.toBytes(cf);
     final int maxVersions = 3;
-    HRegion region = TEST_UTIL.createTestRegion(table,
-        new HColumnDescriptor(cf)
-            .setCompressionType(compress)
-            .setBloomFilterType(BLOOM_TYPE)
-            .setMaxVersions(maxVersions)
-            .setDataBlockEncoding(NoOpDataBlockEncoder.INSTANCE.getDataBlockEncoding())
-    );
+    ColumnFamilyDescriptor cfd =
+        ColumnFamilyDescriptorBuilder.newBuilder(cfBytes).setCompressionType(compress)
+            .setBloomFilterType(BLOOM_TYPE).setMaxVersions(maxVersions)
+            .setDataBlockEncoding(NoOpDataBlockEncoder.INSTANCE.getDataBlockEncoding()).build();
+    HRegion region = TEST_UTIL.createTestRegion(table, cfd, blockCache);
     int rowIdx = 0;
     long ts = EnvironmentEdgeManager.currentTime();
     for (int iFile = 0; iFile < 5; ++iFile) {
@@ -459,7 +457,7 @@ public class TestCacheOnWrite {
       assertNotEquals(BlockType.ENCODED_DATA, block.getBlockType());
       assertNotEquals(BlockType.DATA, block.getBlockType());
     }
-    ((HRegion)region).close();
+    region.close();
   }
 
   @Test

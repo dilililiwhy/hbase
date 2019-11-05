@@ -22,7 +22,6 @@ import static org.junit.Assert.fail;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.hbase.testclassification.IntegrationTests;
 import org.apache.yetus.audience.InterfaceAudience;
@@ -33,7 +32,7 @@ import org.junit.runner.notification.RunListener;
 import org.junit.runner.notification.RunListener.ThreadSafe;
 
 /**
- * A RunListener to confirm that we have a {@link CategoryBasedTimeout} class rule for every test.
+ * A RunListener to confirm that we have a {@link HBaseClassTestRule} class rule for every test.
  */
 @InterfaceAudience.Private
 @ThreadSafe

@@ -15,7 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.procedure2;
 
 import java.util.ArrayList;
@@ -24,6 +23,8 @@ import java.util.List;
 import java.util.Set;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.apache.yetus.audience.InterfaceStability;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos.ProcedureState;
 
@@ -41,6 +42,7 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos.Procedu
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 class RootProcedureState<TEnvironment> {
+  private static final Logger LOG = LoggerFactory.getLogger(RootProcedureState.class);
 
   private enum State {
     RUNNING,         // The Procedure is running or ready to run
@@ -146,6 +148,7 @@ class RootProcedureState<TEnvironment> {
       subprocStack = new ArrayList<>();
     }
     proc.addStackIndex(subprocStack.size());
+    LOG.debug("Add procedure {} as the {}th rollback step", proc, subprocStack.size());
     subprocStack.add(proc);
   }
 
@@ -176,7 +179,9 @@ class RootProcedureState<TEnvironment> {
       int diff = (1 + stackIndexes[stackIndexes.length - 1]) - subprocStack.size();
       if (diff > 0) {
         subprocStack.ensureCapacity(1 + stackIndexes[stackIndexes.length - 1]);
-        while (diff-- > 0) subprocStack.add(null);
+        while (diff-- > 0) {
+          subprocStack.add(null);
+        }
       }
       for (int i = 0; i < stackIndexes.length; ++i) {
         subprocStack.set(stackIndexes[i], proc);

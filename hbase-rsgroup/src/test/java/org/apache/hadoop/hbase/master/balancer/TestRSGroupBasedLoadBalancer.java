@@ -18,7 +18,6 @@
 package org.apache.hadoop.hbase.master.balancer;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -29,7 +28,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
@@ -37,14 +35,12 @@ import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.RegionInfo;
-import org.apache.hadoop.hbase.client.RegionInfoBuilder;
 import org.apache.hadoop.hbase.master.LoadBalancer;
 import org.apache.hadoop.hbase.master.RegionPlan;
 import org.apache.hadoop.hbase.net.Address;
 import org.apache.hadoop.hbase.rsgroup.RSGroupBasedLoadBalancer;
 import org.apache.hadoop.hbase.rsgroup.RSGroupInfo;
-import org.apache.hadoop.hbase.testclassification.SmallTests;
-
+import org.apache.hadoop.hbase.testclassification.LargeTests;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -57,7 +53,7 @@ import org.apache.hbase.thirdparty.com.google.common.collect.ArrayListMultimap;
 /**
  * Test RSGroupBasedLoadBalancer with SimpleLoadBalancer as internal balancer
  */
-@Category(SmallTests.class)
+@Category(LargeTests.class)
 public class TestRSGroupBasedLoadBalancer extends RSGroupableBalancerTestBase {
   @ClassRule
   public static final HBaseClassTestRule CLASS_RULE =
@@ -112,8 +108,7 @@ public class TestRSGroupBasedLoadBalancer extends RSGroupableBalancerTestBase {
         .roundRobinAssignment(regions, servers);
     //test empty region/servers scenario
     //this should not throw an NPE
-    loadBalancer.roundRobinAssignment(regions,
-        Collections.EMPTY_LIST);
+    loadBalancer.roundRobinAssignment(regions, Collections.emptyList());
     //test regular scenario
     assertTrue(assignments.keySet().size() == servers.size());
     for (ServerName sn : assignments.keySet()) {
@@ -132,21 +127,6 @@ public class TestRSGroupBasedLoadBalancer extends RSGroupableBalancerTestBase {
     }
     ArrayListMultimap<String, ServerAndLoad> loadMap = convertToGroupBasedMap(assignments);
     assertClusterAsBalanced(loadMap);
-  }
-
-  @Test
-  public void testGetMisplacedRegions() throws Exception {
-    // Test case where region is not considered misplaced if RSGroupInfo cannot be determined
-    Map<RegionInfo, ServerName> inputForTest = new HashMap<>();
-    RegionInfo ri = RegionInfoBuilder.newBuilder(table0)
-        .setStartKey(new byte[16])
-        .setEndKey(new byte[16])
-        .setSplit(false)
-        .setRegionId(regionId++)
-        .build();
-    inputForTest.put(ri, servers.iterator().next());
-    Set<RegionInfo> misplacedRegions = loadBalancer.getMisplacedRegions(inputForTest);
-    assertFalse(misplacedRegions.contains(ri));
   }
 
   /**

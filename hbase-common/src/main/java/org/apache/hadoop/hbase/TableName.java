@@ -80,9 +80,15 @@ public final class TableName implements Comparable<TableName> {
   public static final TableName META_TABLE_NAME =
       valueOf(NamespaceDescriptor.SYSTEM_NAMESPACE_NAME_STR, "meta");
 
-  /** The Namespace table's name. */
+  /**
+   * The Namespace table's name.
+   * @deprecated since 3.0.0 and will be removed in 4.0.0. We have folded the data in namespace
+   *   table into meta table, so do not use it any more.
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-21154">HBASE-21154</a>
+   */
+  @Deprecated
   public static final TableName NAMESPACE_TABLE_NAME =
-      valueOf(NamespaceDescriptor.SYSTEM_NAMESPACE_NAME_STR, "namespace");
+    valueOf(NamespaceDescriptor.SYSTEM_NAMESPACE_NAME_STR, "namespace");
 
   public static final String OLD_META_STR = ".META.";
   public static final String OLD_ROOT_STR = "-ROOT-";

@@ -169,8 +169,9 @@ public class NettyRpcServer extends RpcServer {
 
   @Override
   public int getNumOpenConnections() {
+    int channelsCount = allChannels.size();
     // allChannels also contains the server channel, so exclude that from the count.
-    return allChannels.size() - 1;
+    return channelsCount > 0 ? channelsCount - 1 : channelsCount;
   }
 
   @Override
@@ -186,7 +187,7 @@ public class NettyRpcServer extends RpcServer {
       Message param, CellScanner cellScanner, long receiveTime, MonitoredRPCHandler status,
       long startTime, int timeout) throws IOException {
     NettyServerCall fakeCall = new NettyServerCall(-1, service, md, null, param, cellScanner, null,
-        -1, null, receiveTime, timeout, reservoir, cellBlockBuilder, null);
+        -1, null, receiveTime, timeout, bbAllocator, cellBlockBuilder, null);
     return call(fakeCall, status);
   }
 }

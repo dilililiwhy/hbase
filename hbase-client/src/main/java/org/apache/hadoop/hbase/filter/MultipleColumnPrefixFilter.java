@@ -19,7 +19,6 @@ package org.apache.hadoop.hbase.filter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.TreeSet;
@@ -67,12 +66,6 @@ public class MultipleColumnPrefixFilter extends FilterBase {
   public boolean filterRowKey(Cell cell) throws IOException {
     // Impl in FilterBase might do unnecessary copy for Off heap backed Cells.
     return false;
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -212,15 +205,11 @@ public class MultipleColumnPrefixFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof MultipleColumnPrefixFilter))) {
-      return false;
-    }
-    MultipleColumnPrefixFilter f = (MultipleColumnPrefixFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(Arrays.hashCode(this.sortedPrefixes.toArray()));
+    return Objects.hash(this.sortedPrefixes);
   }
 }

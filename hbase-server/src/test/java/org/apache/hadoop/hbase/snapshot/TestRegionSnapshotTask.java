@@ -124,10 +124,10 @@ public class TestRegionSnapshotTask {
 
     final HRegion region = spy(hRegions.get(0));
 
-    Path workingDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(snapshot, rootDir);
+    Path workingDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(snapshot, rootDir, conf);
     final SnapshotManifest manifest =
         SnapshotManifest.create(conf, fs, workingDir, snapshot, monitor);
-    manifest.addTableDescriptor(table.getTableDescriptor());
+    manifest.addTableDescriptor(table.getDescriptor());
 
     if (!fs.exists(workingDir)) {
       fs.mkdirs(workingDir);
@@ -166,7 +166,7 @@ public class TestRegionSnapshotTask {
   private void addRegionToSnapshot(SnapshotProtos.SnapshotDescription snapshot,
       HRegion region, SnapshotManifest manifest) throws Exception {
     LOG.info("Adding region to snapshot: " + region.getRegionInfo().getRegionNameAsString());
-    Path workingDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(snapshot, rootDir);
+    Path workingDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(snapshot, rootDir, conf);
     SnapshotManifest.RegionVisitor visitor = createRegionVisitorWithDelay(snapshot, workingDir);
     manifest.addRegion(region, visitor);
     LOG.info("Added the region to snapshot: " + region.getRegionInfo().getRegionNameAsString());

@@ -18,8 +18,11 @@
 package org.apache.hadoop.hbase;
 
 import edu.umd.cs.findbugs.annotations.Nullable;
+
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -75,7 +78,7 @@ public final class ServerMetricsBuilder {
       .setRegionMetrics(serverLoadPB.getRegionLoadsList().stream()
         .map(RegionMetricsBuilder::toRegionMetrics).collect(Collectors.toList()))
       .setReplicationLoadSources(serverLoadPB.getReplLoadSourceList().stream()
-        .map(ProtobufUtil::toReplicationLoadSource).collect(Collectors.toList()))
+          .map(ProtobufUtil::toReplicationLoadSource).collect(Collectors.toList()))
       .setReplicationLoadSink(serverLoadPB.hasReplLoadSink()
         ? ProtobufUtil.toReplicationLoadSink(serverLoadPB.getReplLoadSink())
         : null)
@@ -302,6 +305,16 @@ public final class ServerMetricsBuilder {
     }
 
     @Override
+    public Map<String, List<ReplicationLoadSource>> getReplicationLoadSourceMap(){
+      Map<String,List<ReplicationLoadSource>> sourcesMap = new HashMap<>();
+      for(ReplicationLoadSource loadSource : sources){
+        sourcesMap.computeIfAbsent(loadSource.getPeerID(),
+          peerId -> new ArrayList()).add(loadSource);
+      }
+      return sourcesMap;
+    }
+
+    @Override
     public ReplicationLoadSink getReplicationLoadSink() {
       return sink;
     }
@@ -330,6 +343,8 @@ public final class ServerMetricsBuilder {
     public String toString() {
       int storeCount = 0;
       int storeFileCount = 0;
+      int storeRefCount = 0;
+      int maxStoreFileRefCount = 0;
       long uncompressedStoreFileSizeMB = 0;
       long storeFileSizeMB = 0;
       long memStoreSizeMB = 0;
@@ -345,6 +360,9 @@ public final class ServerMetricsBuilder {
       for (RegionMetrics r : getRegionMetrics().values()) {
         storeCount += r.getStoreCount();
         storeFileCount += r.getStoreFileCount();
+        storeRefCount += r.getStoreRefCount();
+        int currentMaxStoreFileRefCount = r.getMaxStoreFileRefCount();
+        maxStoreFileRefCount = Math.max(maxStoreFileRefCount, currentMaxStoreFileRefCount);
         uncompressedStoreFileSizeMB += r.getUncompressedStoreFileSize().get(Size.Unit.MEGABYTE);
         storeFileSizeMB += r.getStoreFileSize().get(Size.Unit.MEGABYTE);
         memStoreSizeMB += r.getMemStoreSize().get(Size.Unit.MEGABYTE);
@@ -366,6 +384,8 @@ public final class ServerMetricsBuilder {
       Strings.appendKeyValue(sb, "maxHeapMB", getMaxHeapSize());
       Strings.appendKeyValue(sb, "numberOfStores", storeCount);
       Strings.appendKeyValue(sb, "numberOfStorefiles", storeFileCount);
+      Strings.appendKeyValue(sb, "storeRefCount", storeRefCount);
+      Strings.appendKeyValue(sb, "maxStoreFileRefCount", maxStoreFileRefCount);
       Strings.appendKeyValue(sb, "storefileUncompressedSizeMB", uncompressedStoreFileSizeMB);
       Strings.appendKeyValue(sb, "storefileSizeMB", storeFileSizeMB);
       if (uncompressedStoreFileSizeMB != 0) {

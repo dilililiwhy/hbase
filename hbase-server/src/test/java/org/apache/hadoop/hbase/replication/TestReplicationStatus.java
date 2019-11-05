@@ -22,10 +22,10 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.EnumSet;
 import java.util.List;
+import org.apache.hadoop.hbase.ClusterMetrics;
 import org.apache.hadoop.hbase.ClusterMetrics.Option;
-import org.apache.hadoop.hbase.ClusterStatus;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
-import org.apache.hadoop.hbase.ServerLoad;
+import org.apache.hadoop.hbase.ServerMetrics;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.client.Admin;
 import org.apache.hadoop.hbase.client.Put;
@@ -36,78 +36,66 @@ import org.apache.hadoop.hbase.util.JVMClusterUtil;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-@Category({ReplicationTests.class, MediumTests.class})
+@Category({ ReplicationTests.class, MediumTests.class })
 public class TestReplicationStatus extends TestReplicationBase {
 
   @ClassRule
   public static final HBaseClassTestRule CLASS_RULE =
-      HBaseClassTestRule.forClass(TestReplicationStatus.class);
-
-  private static final Logger LOG = LoggerFactory.getLogger(TestReplicationStatus.class);
-  private static final String PEER_ID = "2";
+    HBaseClassTestRule.forClass(TestReplicationStatus.class);
 
   /**
-   * Test for HBASE-9531
-   * put a few rows into htable1, which should be replicated to htable2
-   * create a ClusterStatus instance 'status' from HBaseAdmin
-   * test : status.getLoad(server).getReplicationLoadSourceList()
+   * Test for HBASE-9531.
+   * <p/>
+   * put a few rows into htable1, which should be replicated to htable2 <br/>
+   * create a ClusterStatus instance 'status' from HBaseAdmin <br/>
+   * test : status.getLoad(server).getReplicationLoadSourceList() <br/>
    * test : status.getLoad(server).getReplicationLoadSink()
-   * * @throws Exception
    */
   @Test
   public void testReplicationStatus() throws Exception {
-    LOG.info("testReplicationStatus");
+    Admin hbaseAdmin = UTIL1.getAdmin();
+    // disable peer
+    hbaseAdmin.disableReplicationPeer(PEER_ID2);
 
-    try (Admin hbaseAdmin = utility1.getConnection().getAdmin()) {
-      // disable peer
-      admin.disablePeer(PEER_ID);
+    final byte[] qualName = Bytes.toBytes("q");
+    Put p;
 
-      final byte[] qualName = Bytes.toBytes("q");
-      Put p;
-
-      for (int i = 0; i < NB_ROWS_IN_BATCH; i++) {
-        p = new Put(Bytes.toBytes("row" + i));
-        p.addColumn(famName, qualName, Bytes.toBytes("val" + i));
-        htable1.put(p);
-      }
-
-      ClusterStatus status = new ClusterStatus(hbaseAdmin.getClusterMetrics(
-        EnumSet.of(Option.LIVE_SERVERS)));
-
-      for (JVMClusterUtil.RegionServerThread thread : utility1.getHBaseCluster()
-          .getRegionServerThreads()) {
-        ServerName server = thread.getRegionServer().getServerName();
-        ServerLoad sl = status.getLoad(server);
-        List<ReplicationLoadSource> rLoadSourceList = sl.getReplicationLoadSourceList();
-        ReplicationLoadSink rLoadSink = sl.getReplicationLoadSink();
-
-        // check SourceList only has one entry, beacuse only has one peer
-        assertTrue("failed to get ReplicationLoadSourceList", (rLoadSourceList.size() == 1));
-        assertEquals(PEER_ID, rLoadSourceList.get(0).getPeerID());
-
-        // check Sink exist only as it is difficult to verify the value on the fly
-        assertTrue("failed to get ReplicationLoadSink.AgeOfLastShippedOp ",
-          (rLoadSink.getAgeOfLastAppliedOp() >= 0));
-        assertTrue("failed to get ReplicationLoadSink.TimeStampsOfLastAppliedOp ",
-          (rLoadSink.getTimestampsOfLastAppliedOp() >= 0));
-      }
-
-      // Stop rs1, then the queue of rs1 will be transfered to rs0
-      utility1.getHBaseCluster().getRegionServer(1).stop("Stop RegionServer");
-      Thread.sleep(10000);
-      status = new ClusterStatus(hbaseAdmin.getClusterMetrics(EnumSet.of(Option.LIVE_SERVERS)));
-      ServerName server = utility1.getHBaseCluster().getRegionServer(0).getServerName();
-      ServerLoad sl = status.getLoad(server);
-      List<ReplicationLoadSource> rLoadSourceList = sl.getReplicationLoadSourceList();
-      // check SourceList still only has one entry
-      assertTrue("failed to get ReplicationLoadSourceList", (rLoadSourceList.size() == 1));
-      assertEquals(PEER_ID, rLoadSourceList.get(0).getPeerID());
-    } finally {
-      admin.enablePeer(PEER_ID);
-      utility1.getHBaseCluster().getRegionServer(1).start();
+    for (int i = 0; i < NB_ROWS_IN_BATCH; i++) {
+      p = new Put(Bytes.toBytes("row" + i));
+      p.addColumn(famName, qualName, Bytes.toBytes("val" + i));
+      htable1.put(p);
     }
+
+    ClusterMetrics metrics = hbaseAdmin.getClusterMetrics(EnumSet.of(Option.LIVE_SERVERS));
+
+    for (JVMClusterUtil.RegionServerThread thread : UTIL1.getHBaseCluster()
+      .getRegionServerThreads()) {
+      ServerName server = thread.getRegionServer().getServerName();
+      ServerMetrics sm = metrics.getLiveServerMetrics().get(server);
+      List<ReplicationLoadSource> rLoadSourceList = sm.getReplicationLoadSourceList();
+      ReplicationLoadSink rLoadSink = sm.getReplicationLoadSink();
+
+      // check SourceList only has one entry, because only has one peer
+      assertTrue("failed to get ReplicationLoadSourceList", (rLoadSourceList.size() == 1));
+      assertEquals(PEER_ID2, rLoadSourceList.get(0).getPeerID());
+
+      // check Sink exist only as it is difficult to verify the value on the fly
+      assertTrue("failed to get ReplicationLoadSink.AgeOfLastShippedOp ",
+        (rLoadSink.getAgeOfLastAppliedOp() >= 0));
+      assertTrue("failed to get ReplicationLoadSink.TimeStampsOfLastAppliedOp ",
+        (rLoadSink.getTimestampsOfLastAppliedOp() >= 0));
+    }
+
+    // Stop rs1, then the queue of rs1 will be transfered to rs0
+    UTIL1.getHBaseCluster().getRegionServer(1).stop("Stop RegionServer");
+    Thread.sleep(10000);
+    metrics = hbaseAdmin.getClusterMetrics(EnumSet.of(Option.LIVE_SERVERS));
+    ServerName server = UTIL1.getHBaseCluster().getRegionServer(0).getServerName();
+    ServerMetrics sm = metrics.getLiveServerMetrics().get(server);
+    List<ReplicationLoadSource> rLoadSourceList = sm.getReplicationLoadSourceList();
+    // check SourceList still only has one entry
+    assertTrue("failed to get ReplicationLoadSourceList", (rLoadSourceList.size() == 2));
+    assertEquals(PEER_ID2, rLoadSourceList.get(0).getPeerID());
   }
 }

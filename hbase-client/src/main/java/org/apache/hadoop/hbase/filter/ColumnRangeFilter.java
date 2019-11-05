@@ -123,12 +123,6 @@ public class ColumnRangeFilter extends FilterBase {
   }
 
   @Override
-  @Deprecated
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
-  }
-
-  @Override
   public ReturnCode filterCell(final Cell c) {
     int cmpMin = 1;
 
@@ -243,16 +237,12 @@ public class ColumnRangeFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof ColumnRangeFilter))) {
-      return false;
-    }
-    ColumnRangeFilter f = (ColumnRangeFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(Bytes.toStringBinary(this.getMinColumn()), this.getMinColumnInclusive(),
-        Bytes.toStringBinary(this.getMaxColumn()), this.getMaxColumnInclusive());
+    return Objects.hash(Bytes.hashCode(getMinColumn()), getMinColumnInclusive(),
+      Bytes.hashCode(getMaxColumn()), getMaxColumnInclusive());
   }
 }

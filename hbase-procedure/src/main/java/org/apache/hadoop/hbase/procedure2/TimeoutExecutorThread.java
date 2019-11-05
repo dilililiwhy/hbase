@@ -24,8 +24,6 @@ import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos.ProcedureState;
-
 /**
  * Runs task on a period such as check for stuck workers.
  * @see InlineChore
@@ -78,7 +76,6 @@ class TimeoutExecutorThread<TEnvironment> extends StoppableThread {
   }
 
   public void add(Procedure<TEnvironment> procedure) {
-    assert procedure.getState() == ProcedureState.WAITING_TIMEOUT;
     LOG.info("ADDED {}; timeout={}, timestamp={}", procedure, procedure.getTimeout(),
       procedure.getTimeoutTimestamp());
     queue.add(new DelayedProcedure<>(procedure));
@@ -126,7 +123,7 @@ class TimeoutExecutorThread<TEnvironment> extends StoppableThread {
     }
   }
 
-  private void executeTimedoutProcedure(Procedure<TEnvironment> proc) {
+  protected void executeTimedoutProcedure(Procedure<TEnvironment> proc) {
     // The procedure received a timeout. if the procedure itself does not handle it,
     // call abort() and add the procedure back in the queue for rollback.
     if (proc.setTimeoutFailure(executor.getEnvironment())) {

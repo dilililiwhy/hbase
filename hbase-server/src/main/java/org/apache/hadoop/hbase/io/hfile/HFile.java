@@ -356,9 +356,7 @@ public class HFile {
    */
   public static final WriterFactory getWriterFactoryNoCache(Configuration
        conf) {
-    Configuration tempConf = new Configuration(conf);
-    tempConf.setFloat(HConstants.HFILE_BLOCK_CACHE_SIZE_KEY, 0.0f);
-    return HFile.getWriterFactory(conf, new CacheConfig(tempConf));
+    return HFile.getWriterFactory(conf, CacheConfig.DISABLED);
   }
 
   /**
@@ -409,12 +407,6 @@ public class HFile {
         final boolean updateCacheMetrics, BlockType expectedBlockType,
         DataBlockEncoding expectedDataBlockEncoding)
         throws IOException;
-
-    /**
-     * Return the given block back to the cache, if it was obtained from cache.
-     * @param block Block to be returned.
-     */
-    void returnBlock(HFileBlock block);
   }
 
   /** An interface used by clients to open and iterate an {@link HFile}. */

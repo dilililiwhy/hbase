@@ -253,9 +253,9 @@ public class TestWALSplit {
           }
           LOG.debug(Objects.toString(ls));
           LOG.info("Splitting WALs out from under zombie. Expecting " + numWriters + " files.");
-          WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf2, wals);
+          WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf2, wals);
           LOG.info("Finished splitting out from under zombie.");
-          Path[] logfiles = getLogForRegion(HBASEDIR, TABLE_NAME, region);
+          Path[] logfiles = getLogForRegion(TABLE_NAME, region);
           assertEquals("wrong number of split files for region", numWriters, logfiles.length);
           int count = 0;
           for (Path logfile: logfiles) {
@@ -379,22 +379,11 @@ public class TestWALSplit {
   }
 
   /**
-   * {@see https://issues.apache.org/jira/browse/HBASE-3020}
+   * @see "https://issues.apache.org/jira/browse/HBASE-3020"
    */
   @Test
   public void testRecoveredEditsPathForMeta() throws IOException {
-    byte[] encoded = RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedNameAsBytes();
-    Path tdir = FSUtils.getTableDir(HBASEDIR, TableName.META_TABLE_NAME);
-    Path regiondir = new Path(tdir,
-      RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedName());
-    fs.mkdirs(regiondir);
-    long now = System.currentTimeMillis();
-    Entry entry =
-        new Entry(new WALKeyImpl(encoded,
-            TableName.META_TABLE_NAME, 1, now, HConstants.DEFAULT_CLUSTER_ID),
-            new WALEdit());
-    Path p = WALSplitter.getRegionSplitEditsPath(entry,
-        FILENAME_BEING_SPLIT, TMPDIRNAME, conf);
+    Path p = createRecoveredEditsPathForRegion();
     String parentOfParent = p.getParent().getParent().getName();
     assertEquals(parentOfParent, RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedName());
   }
@@ -405,25 +394,38 @@ public class TestWALSplit {
    */
   @Test
   public void testOldRecoveredEditsFileSidelined() throws IOException {
-    byte [] encoded = RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedNameAsBytes();
+    Path p = createRecoveredEditsPathForRegion();
     Path tdir = FSUtils.getTableDir(HBASEDIR, TableName.META_TABLE_NAME);
     Path regiondir = new Path(tdir,
       RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedName());
     fs.mkdirs(regiondir);
-    long now = System.currentTimeMillis();
-    Entry entry =
-        new Entry(new WALKeyImpl(encoded,
-            TableName.META_TABLE_NAME, 1, now, HConstants.DEFAULT_CLUSTER_ID),
-            new WALEdit());
-    Path parent = WALSplitter.getRegionDirRecoveredEditsDir(regiondir);
+    Path parent = WALSplitUtil.getRegionDirRecoveredEditsDir(regiondir);
     assertEquals(HConstants.RECOVERED_EDITS_DIR, parent.getName());
     fs.createNewFile(parent); // create a recovered.edits file
-
-    Path p = WALSplitter.getRegionSplitEditsPath(entry,
-        FILENAME_BEING_SPLIT, TMPDIRNAME, conf);
     String parentOfParent = p.getParent().getParent().getName();
     assertEquals(parentOfParent, RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedName());
     WALFactory.createRecoveredEditsWriter(fs, p, conf).close();
+  }
+
+  private Path createRecoveredEditsPathForRegion() throws  IOException{
+    byte[] encoded = RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedNameAsBytes();
+    long now = System.currentTimeMillis();
+    Entry entry =
+      new Entry(new WALKeyImpl(encoded,
+        TableName.META_TABLE_NAME, 1, now, HConstants.DEFAULT_CLUSTER_ID),
+        new WALEdit());
+    Path p = WALSplitUtil.getRegionSplitEditsPath(entry,
+      FILENAME_BEING_SPLIT, TMPDIRNAME, conf);
+    return p;
+  }
+
+  @Test
+  public void testHasRecoveredEdits() throws IOException {
+    Path p = createRecoveredEditsPathForRegion();
+    assertFalse(WALSplitUtil.hasRecoveredEdits(conf, RegionInfoBuilder.FIRST_META_REGIONINFO));
+    String renamedEdit = p.getName().split("-")[0];
+    fs.createNewFile(new Path(p.getParent(), renamedEdit));
+    assertTrue(WALSplitUtil.hasRecoveredEdits(conf, RegionInfoBuilder.FIRST_META_REGIONINFO));
   }
 
   private void useDifferentDFSClient() throws IOException {
@@ -440,9 +442,9 @@ public class TestWALSplit {
 
     generateWALs(1, 10, -1, 0);
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     Path originalLog = (fs.listStatus(OLDLOGDIR))[0].getPath();
-    Path[] splitLog = getLogForRegion(HBASEDIR, TABLE_NAME, REGION);
+    Path[] splitLog = getLogForRegion(TABLE_NAME, REGION);
     assertEquals(1, splitLog.length);
 
     assertTrue("edits differ after split", logsAreEqual(originalLog, splitLog[0]));
@@ -456,9 +458,9 @@ public class TestWALSplit {
 
     generateWALs(1, 10, -1, 100);
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     Path originalLog = (fs.listStatus(OLDLOGDIR))[0].getPath();
-    Path[] splitLog = getLogForRegion(HBASEDIR, TABLE_NAME, REGION);
+    Path[] splitLog = getLogForRegion(TABLE_NAME, REGION);
     assertEquals(1, splitLog.length);
 
     assertFalse("edits differ after split", logsAreEqual(originalLog, splitLog[0]));
@@ -483,13 +485,13 @@ public class TestWALSplit {
     writer.close();
 
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
 
     Path originalLog = (fs.listStatus(OLDLOGDIR))[0].getPath();
     // original log should have 10 test edits, 10 region markers, 1 compaction marker
     assertEquals(21, countWAL(originalLog));
 
-    Path[] splitLog = getLogForRegion(HBASEDIR, TABLE_NAME, hri.getEncodedName());
+    Path[] splitLog = getLogForRegion(TABLE_NAME, hri.getEncodedName());
     assertEquals(1, splitLog.length);
 
     assertFalse("edits differ after split", logsAreEqual(originalLog, splitLog[0]));
@@ -504,10 +506,10 @@ public class TestWALSplit {
   private int splitAndCount(final int expectedFiles, final int expectedEntries)
       throws IOException {
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     int result = 0;
     for (String region : REGIONS) {
-      Path[] logfiles = getLogForRegion(HBASEDIR, TABLE_NAME, region);
+      Path[] logfiles = getLogForRegion(TABLE_NAME, region);
       assertEquals(expectedFiles, logfiles.length);
       int count = 0;
       for (Path logfile: logfiles) {
@@ -640,7 +642,7 @@ public class TestWALSplit {
         walDirContents.add(status.getPath().getName());
       }
       useDifferentDFSClient();
-      WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+      WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
       return walDirContents;
     } finally {
       conf.setClass("hbase.regionserver.hlog.reader.impl", backupClass,
@@ -681,9 +683,9 @@ public class TestWALSplit {
     corruptWAL(c1, corruption, true);
 
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
 
-    Path[] splitLog = getLogForRegion(HBASEDIR, TABLE_NAME, REGION);
+    Path[] splitLog = getLogForRegion(TABLE_NAME, REGION);
     assertEquals(1, splitLog.length);
 
     int actualCount = 0;
@@ -717,7 +719,7 @@ public class TestWALSplit {
     conf.setBoolean(HBASE_SKIP_ERRORS, false);
     generateWALs(-1);
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     FileStatus[] archivedLogs = fs.listStatus(OLDLOGDIR);
     assertEquals("wrong number of files in the archive log", NUM_WRITERS, archivedLogs.length);
   }
@@ -733,7 +735,7 @@ public class TestWALSplit {
       throws IOException {
     generateWALs(-1);
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     FileStatus [] statuses = null;
     try {
       statuses = fs.listStatus(WALDIR);
@@ -763,7 +765,7 @@ public class TestWALSplit {
 
     try {
       InstrumentedLogWriter.activateFailure = true;
-      WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+      WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     } catch (IOException e) {
       assertTrue(e.getMessage().
           contains("This exception is instrumented and should only be thrown for testing"));
@@ -784,7 +786,7 @@ public class TestWALSplit {
 
     Path regiondir = new Path(TABLEDIR, region);
     fs.delete(regiondir, true);
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     assertFalse(fs.exists(regiondir));
   }
 
@@ -861,7 +863,7 @@ public class TestWALSplit {
     useDifferentDFSClient();
 
     try {
-      WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, spiedFs, conf, wals);
+      WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, spiedFs, conf, wals);
       assertEquals(NUM_WRITERS, fs.listStatus(OLDLOGDIR).length);
       assertFalse(fs.exists(WALDIR));
     } catch (IOException e) {
@@ -1085,7 +1087,7 @@ public class TestWALSplit {
     Path regiondir = new Path(TABLEDIR, REGION);
     LOG.info("Region directory is" + regiondir);
     fs.delete(regiondir, true);
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     assertFalse(fs.exists(regiondir));
   }
 
@@ -1098,7 +1100,7 @@ public class TestWALSplit {
     injectEmptyFile(".empty", true);
     useDifferentDFSClient();
 
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
     Path tdir = FSUtils.getTableDir(HBASEDIR, TABLE_NAME);
     assertFalse(fs.exists(tdir));
 
@@ -1123,14 +1125,14 @@ public class TestWALSplit {
         Corruptions.INSERT_GARBAGE_ON_FIRST_LINE, true);
 
     useDifferentDFSClient();
-    WALSplitter.split(HBASEDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
+    WALSplitter.split(HBASELOGDIR, WALDIR, OLDLOGDIR, fs, conf, wals);
 
     final Path corruptDir = new Path(FSUtils.getWALRootDir(conf), HConstants.CORRUPT_DIR_NAME);
     assertEquals(1, fs.listStatus(corruptDir).length);
   }
 
   /**
-   * {@see https://issues.apache.org/jira/browse/HBASE-4862}
+   * @see "https://issues.apache.org/jira/browse/HBASE-4862"
    */
   @Test
   public void testConcurrentSplitLogAndReplayRecoverEdit() throws IOException {
@@ -1151,14 +1153,14 @@ public class TestWALSplit {
       @Override
       protected Writer createWriter(Path logfile)
           throws IOException {
-        Writer writer = wals.createRecoveredEditsWriter(this.fs, logfile);
+        Writer writer = wals.createRecoveredEditsWriter(this.walFS, logfile);
         // After creating writer, simulate region's
         // replayRecoveredEditsIfAny() which gets SplitEditFiles of this
         // region and delete them, excluding files with '.temp' suffix.
-        NavigableSet<Path> files = WALSplitter.getSplitEditFilesSorted(fs, regiondir);
+        NavigableSet<Path> files = WALSplitUtil.getSplitEditFilesSorted(fs, regiondir);
         if (files != null && !files.isEmpty()) {
           for (Path file : files) {
-            if (!this.fs.delete(file, false)) {
+            if (!this.walFS.delete(file, false)) {
               LOG.error("Failed delete of " + file);
             } else {
               LOG.debug("Deleted recovered.edits file=" + file);
@@ -1237,16 +1239,16 @@ public class TestWALSplit {
 
 
 
-  private Path[] getLogForRegion(Path rootdir, TableName table, String region)
+  private Path[] getLogForRegion(TableName table, String region)
       throws IOException {
-    Path tdir = FSUtils.getTableDir(rootdir, table);
+    Path tdir = FSUtils.getWALTableDir(conf, table);
     @SuppressWarnings("deprecation")
-    Path editsdir = WALSplitter.getRegionDirRecoveredEditsDir(HRegion.getRegionDir(tdir,
+    Path editsdir = WALSplitUtil.getRegionDirRecoveredEditsDir(HRegion.getRegionDir(tdir,
         Bytes.toString(Bytes.toBytes(region))));
     FileStatus[] files = fs.listStatus(editsdir, new PathFilter() {
       @Override
       public boolean accept(Path p) {
-        if (WALSplitter.isSequenceIdFile(p)) {
+        if (WALSplitUtil.isSequenceIdFile(p)) {
           return false;
         }
         return true;
@@ -1374,12 +1376,10 @@ public class TestWALSplit {
         1,
         ServerName.parseServerName("ServerName:9099"), ImmutableMap.<byte[], List<Path>>of());
     final long time = EnvironmentEdgeManager.currentTime();
-    KeyValue kv = new KeyValue(Bytes.toBytes(region), WALEdit.METAFAMILY, WALEdit.REGION_EVENT,
-        time, regionOpenDesc.toByteArray());
     final WALKeyImpl walKey = new WALKeyImpl(Bytes.toBytes(region), TABLE_NAME, 1, time,
         HConstants.DEFAULT_CLUSTER_ID);
-    w.append(
-        new Entry(walKey, new WALEdit().add(kv)));
+    WALEdit we = WALEdit.createRegionEventWALEdit(Bytes.toBytes(region), regionOpenDesc);
+    w.append(new Entry(walKey, we));
     w.sync(false);
   }
 

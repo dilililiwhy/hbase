@@ -116,7 +116,7 @@ public class TestMasterMetricsWrapper {
   /**
    * tests online and offline region number
    */
-  @Test (timeout=30000)
+  @Test
   public void testOfflineRegion() throws Exception {
     HMaster master = TEST_UTIL.getHBaseCluster().getMaster();
     MetricsMasterWrapperImpl info = new MetricsMasterWrapperImpl(master);
@@ -126,7 +126,7 @@ public class TestMasterMetricsWrapper {
       HTableDescriptor desc = new HTableDescriptor(table);
       byte[] FAMILY = Bytes.toBytes("FAMILY");
       desc.addFamily(new HColumnDescriptor(FAMILY));
-      TEST_UTIL.getHBaseAdmin().createTable(desc, Bytes.toBytes("A"), Bytes.toBytes("Z"), 5);
+      TEST_UTIL.getAdmin().createTable(desc, Bytes.toBytes("A"), Bytes.toBytes("Z"), 5);
 
       // wait till the table is assigned
       long timeoutTime = System.currentTimeMillis() + 1000;
@@ -148,7 +148,7 @@ public class TestMasterMetricsWrapper {
       assertEquals(5, regionNumberPair.getFirst().intValue());
       assertEquals(0, regionNumberPair.getSecond().intValue());
 
-      TEST_UTIL.getHBaseAdmin().offline(hri.getRegionName());
+      TEST_UTIL.getAdmin().offline(hri.getRegionName());
 
       timeoutTime = System.currentTimeMillis() + 800;
       RegionStates regionStates = master.getAssignmentManager().getRegionStates();

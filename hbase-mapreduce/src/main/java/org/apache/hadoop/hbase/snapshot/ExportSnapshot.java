@@ -267,9 +267,10 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
       return new Path(outputArchive, path);
     }
 
+    @SuppressWarnings("checkstyle:linelength")
     /**
      * Used by TestExportSnapshot to test for retries when failures happen.
-     * Failure is injected in {@link #copyFile(Context, SnapshotFileInfo, Path)}.
+     * Failure is injected in {@link #copyFile(Mapper.Context, org.apache.hadoop.hbase.shaded.protobuf.generated.SnapshotProtos.SnapshotFileInfo, Path)}.
      */
     private void injectTestFailure(final Context context, final SnapshotFileInfo inputInfo)
         throws IOException {
@@ -972,10 +973,12 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
     FileSystem outputFs = FileSystem.get(outputRoot.toUri(), destConf);
     LOG.debug("outputFs=" + outputFs.getUri().toString() + " outputRoot=" + outputRoot.toString());
 
-    boolean skipTmp = conf.getBoolean(CONF_SKIP_TMP, false);
+    boolean skipTmp = conf.getBoolean(CONF_SKIP_TMP, false) ||
+        conf.get(SnapshotDescriptionUtils.SNAPSHOT_WORKING_DIR) != null;
 
     Path snapshotDir = SnapshotDescriptionUtils.getCompletedSnapshotDir(snapshotName, inputRoot);
-    Path snapshotTmpDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(targetName, outputRoot);
+    Path snapshotTmpDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(targetName, outputRoot,
+        destConf);
     Path outputSnapshotDir = SnapshotDescriptionUtils.getCompletedSnapshotDir(targetName, outputRoot);
     Path initialOutputSnapshotDir = skipTmp ? outputSnapshotDir : snapshotTmpDir;
 
@@ -985,7 +988,7 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
       if (skipTmp) {
         needSetOwnerDir = outputSnapshotDir;
       } else {
-        needSetOwnerDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(outputRoot);
+        needSetOwnerDir = SnapshotDescriptionUtils.getWorkingSnapshotDir(outputRoot, destConf);
         if (outputFs.exists(needSetOwnerDir)) {
           needSetOwnerDir = snapshotTmpDir;
         }

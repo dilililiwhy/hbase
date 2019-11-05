@@ -55,6 +55,8 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.io.Writable;
 
+import org.apache.hbase.thirdparty.com.google.common.annotations.VisibleForTesting;
+
 /**
  * Common functionality needed by all versions of {@link HFile} writers.
  */
@@ -292,9 +294,8 @@ public class HFileWriterImpl implements HFile.Writer {
     if (blockWriter != null) {
       throw new IllegalStateException("finishInit called twice");
     }
-
-    blockWriter = new HFileBlock.Writer(blockEncoder, hFileContext);
-
+    blockWriter = new HFileBlock.Writer(blockEncoder, hFileContext,
+        cacheConf.getByteBuffAllocator());
     // Data block index writer
     boolean cacheIndexesOnWrite = cacheConf.shouldCacheIndexesOnWrite();
     dataBlockIndexWriter = new HFileBlockIndex.BlockIndexWriter(blockWriter,
@@ -542,10 +543,16 @@ public class HFileWriterImpl implements HFile.Writer {
    *          the cache key.
    */
   private void doCacheOnWrite(long offset) {
-    HFileBlock cacheFormatBlock = blockWriter.getBlockForCaching(cacheConf);
-    cacheConf.getBlockCache().cacheBlock(
-        new BlockCacheKey(name, offset, true, cacheFormatBlock.getBlockType()),
-        cacheFormatBlock);
+    cacheConf.getBlockCache().ifPresent(cache -> {
+      HFileBlock cacheFormatBlock = blockWriter.getBlockForCaching(cacheConf);
+      try {
+        cache.cacheBlock(new BlockCacheKey(name, offset, true, cacheFormatBlock.getBlockType()),
+            cacheFormatBlock);
+      } finally {
+        // refCnt will auto increase when block add to Cache, see RAMCache#putIfAbsent
+        cacheFormatBlock.release();
+      }
+    });
   }
 
   /**
@@ -761,6 +768,7 @@ public class HFileWriterImpl implements HFile.Writer {
 
   @Override
   public void beforeShipped() throws IOException {
+    this.blockWriter.beforeShipped();
     // Add clone methods for every cell
     if (this.lastCell != null) {
       this.lastCell = KeyValueUtil.toNewKeyCell(this.lastCell);
@@ -771,6 +779,11 @@ public class HFileWriterImpl implements HFile.Writer {
     if (this.lastCellOfPreviousBlock != null) {
       this.lastCellOfPreviousBlock = KeyValueUtil.toNewKeyCell(this.lastCellOfPreviousBlock);
     }
+  }
+
+  @VisibleForTesting
+  public Cell getLastCell() {
+    return lastCell;
   }
 
   protected void finishFileInfo() throws IOException {

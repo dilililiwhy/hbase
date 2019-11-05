@@ -38,11 +38,11 @@ import org.apache.hadoop.hbase.backup.TestBackupBase;
 import org.apache.hadoop.hbase.backup.impl.BackupSystemTable;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
-import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.testclassification.LargeTests;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.CommonFSUtils;
 import org.apache.hadoop.hbase.wal.AbstractFSWALProvider;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -107,7 +107,7 @@ public class TestBackupLogCleaner extends TestBackupBase {
       assertTrue(walFiles.size() < newWalFiles.size());
       Connection conn = ConnectionFactory.createConnection(conf1);
       // #2 - insert some data to table
-      HTable t1 = (HTable) conn.getTable(table1);
+      Table t1 = conn.getTable(table1);
       Put p1;
       for (int i = 0; i < NB_ROWS_IN_BATCH; i++) {
         p1 = new Put(Bytes.toBytes("row-t1" + i));
@@ -117,7 +117,7 @@ public class TestBackupLogCleaner extends TestBackupBase {
 
       t1.close();
 
-      HTable t2 = (HTable) conn.getTable(table2);
+      Table t2 = conn.getTable(table2);
       Put p2;
       for (int i = 0; i < 5; i++) {
         p2 = new Put(Bytes.toBytes("row-t2" + i));
@@ -151,8 +151,8 @@ public class TestBackupLogCleaner extends TestBackupBase {
   }
 
   private List<FileStatus> getListOfWALFiles(Configuration c) throws IOException {
-    Path logRoot = new Path(FSUtils.getRootDir(c), HConstants.HREGION_LOGDIR_NAME);
-    FileSystem fs = FileSystem.get(c);
+    Path logRoot = new Path(CommonFSUtils.getWALRootDir(c), HConstants.HREGION_LOGDIR_NAME);
+    FileSystem fs = logRoot.getFileSystem(c);
     RemoteIterator<LocatedFileStatus> it = fs.listFiles(logRoot, true);
     List<FileStatus> logFiles = new ArrayList<FileStatus>();
     while (it.hasNext()) {

@@ -18,12 +18,7 @@
  */
 package org.apache.hadoop.hbase.thrift;
 
-import static org.apache.hadoop.hbase.thrift.ThriftServerRunner.THRIFT_KERBEROS_PRINCIPAL_KEY;
-import static org.apache.hadoop.hbase.thrift.ThriftServerRunner.THRIFT_KEYTAB_FILE_KEY;
-import static org.apache.hadoop.hbase.thrift.ThriftServerRunner.THRIFT_SPNEGO_KEYTAB_FILE_KEY;
-import static org.apache.hadoop.hbase.thrift.ThriftServerRunner.THRIFT_SPNEGO_PRINCIPAL_KEY;
-import static org.apache.hadoop.hbase.thrift.ThriftServerRunner.THRIFT_SUPPORT_PROXYUSER_KEY;
-import static org.apache.hadoop.hbase.thrift.ThriftServerRunner.USE_HTTP_CONF_KEY;
+import static org.apache.hadoop.hbase.thrift.Constants.THRIFT_SUPPORT_PROXYUSER_KEY;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -45,6 +40,7 @@ import org.apache.hadoop.hbase.security.HBaseKerberosUtils;
 import org.apache.hadoop.hbase.testclassification.ClientTests;
 import org.apache.hadoop.hbase.testclassification.LargeTests;
 import org.apache.hadoop.hbase.thrift.generated.Hbase;
+import org.apache.hadoop.hbase.util.TableDescriptorChecker;
 import org.apache.hadoop.security.authentication.util.KerberosName;
 import org.apache.http.HttpHeaders;
 import org.apache.http.auth.AuthSchemeProvider;
@@ -133,14 +129,14 @@ public class TestThriftSpnegoHttpServer extends TestThriftHttpServer {
     HBaseKerberosUtils.setSecuredConfiguration(conf, serverPrincipal, spnegoServerPrincipal);
 
     conf.setBoolean(THRIFT_SUPPORT_PROXYUSER_KEY, true);
-    conf.setBoolean(USE_HTTP_CONF_KEY, true);
+    conf.setBoolean(Constants.USE_HTTP_CONF_KEY, true);
     conf.set("hadoop.proxyuser.hbase.hosts", "*");
     conf.set("hadoop.proxyuser.hbase.groups", "*");
 
-    conf.set(THRIFT_KERBEROS_PRINCIPAL_KEY, serverPrincipal);
-    conf.set(THRIFT_KEYTAB_FILE_KEY, serverKeytab.getAbsolutePath());
-    conf.set(THRIFT_SPNEGO_PRINCIPAL_KEY, spnegoServerPrincipal);
-    conf.set(THRIFT_SPNEGO_KEYTAB_FILE_KEY, spnegoServerKeytab.getAbsolutePath());
+    conf.set(Constants.THRIFT_KERBEROS_PRINCIPAL_KEY, serverPrincipal);
+    conf.set(Constants.THRIFT_KEYTAB_FILE_KEY, serverKeytab.getAbsolutePath());
+    conf.set(Constants.THRIFT_SPNEGO_PRINCIPAL_KEY, spnegoServerPrincipal);
+    conf.set(Constants.THRIFT_SPNEGO_KEYTAB_FILE_KEY, spnegoServerKeytab.getAbsolutePath());
   }
 
   @BeforeClass
@@ -170,8 +166,8 @@ public class TestThriftSpnegoHttpServer extends TestThriftHttpServer {
     spnegoServerKeytab = new File(keytabDir, spnegoServerPrincipal.replace('/', '_') + ".keytab");
     setupUser(kdc, spnegoServerKeytab, spnegoServerPrincipal);
 
-    TEST_UTIL.getConfiguration().setBoolean(USE_HTTP_CONF_KEY, true);
-    TEST_UTIL.getConfiguration().setBoolean("hbase.table.sanity.checks", false);
+    TEST_UTIL.getConfiguration().setBoolean(Constants.USE_HTTP_CONF_KEY, true);
+    TEST_UTIL.getConfiguration().setBoolean(TableDescriptorChecker.TABLE_SANITY_CHECKS, false);
     addSecurityConfigurations(TEST_UTIL.getConfiguration());
 
     TestThriftHttpServer.setUpBeforeClass();
@@ -191,7 +187,7 @@ public class TestThriftSpnegoHttpServer extends TestThriftHttpServer {
   }
 
   @Override
-  void talkToThriftServer(String url, int customHeaderSize) throws Exception {
+  protected void talkToThriftServer(String url, int customHeaderSize) throws Exception {
     // Close httpClient and THttpClient automatically on any failures
     try (
         CloseableHttpClient httpClient = createHttpClient();

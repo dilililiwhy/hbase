@@ -40,7 +40,6 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.RawCellBuilder;
 import org.apache.hadoop.hbase.RawCellBuilderFactory;
 import org.apache.hadoop.hbase.ServerName;
-import org.apache.hadoop.hbase.SharedConnection;
 import org.apache.hadoop.hbase.client.Append;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.Delete;
@@ -52,6 +51,7 @@ import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.RegionInfo;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.SharedConnection;
 import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.coprocessor.BaseEnvironment;
 import org.apache.hadoop.hbase.coprocessor.BulkLoadObserver;
@@ -67,7 +67,6 @@ import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessor;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.RegionObserver;
-import org.apache.hadoop.hbase.coprocessor.RegionObserver.MutationType;
 import org.apache.hadoop.hbase.filter.ByteArrayComparable;
 import org.apache.hadoop.hbase.io.FSDataInputStreamWrapper;
 import org.apache.hadoop.hbase.io.Reference;
@@ -1691,18 +1690,46 @@ public class RegionCoprocessorHost
         });
   }
 
-  public Cell postMutationBeforeWAL(final MutationType opType, final Mutation mutation,
-      final Cell oldCell, Cell newCell) throws IOException {
+  public List<Pair<Cell, Cell>> postIncrementBeforeWAL(final Mutation mutation,
+      final List<Pair<Cell, Cell>> cellPairs) throws IOException {
     if (this.coprocEnvironments.isEmpty()) {
-      return newCell;
+      return cellPairs;
     }
     return execOperationWithResult(
-        new ObserverOperationWithResult<RegionObserver, Cell>(regionObserverGetter, newCell) {
+        new ObserverOperationWithResult<RegionObserver, List<Pair<Cell, Cell>>>(
+            regionObserverGetter, cellPairs) {
           @Override
-          public Cell call(RegionObserver observer) throws IOException {
-            return observer.postMutationBeforeWAL(this, opType, mutation, oldCell, getResult());
+          public List<Pair<Cell, Cell>> call(RegionObserver observer) throws IOException {
+            return observer.postIncrementBeforeWAL(this, mutation, getResult());
           }
         });
+  }
+
+  public List<Pair<Cell, Cell>> postAppendBeforeWAL(final Mutation mutation,
+      final List<Pair<Cell, Cell>> cellPairs) throws IOException {
+    if (this.coprocEnvironments.isEmpty()) {
+      return cellPairs;
+    }
+    return execOperationWithResult(
+        new ObserverOperationWithResult<RegionObserver, List<Pair<Cell, Cell>>>(
+            regionObserverGetter, cellPairs) {
+          @Override
+          public List<Pair<Cell, Cell>> call(RegionObserver observer) throws IOException {
+            return observer.postAppendBeforeWAL(this, mutation, getResult());
+          }
+        });
+  }
+
+  public void preWALAppend(WALKey key, WALEdit edit) throws IOException {
+    if (this.coprocEnvironments.isEmpty()){
+      return;
+    }
+    execOperation(new RegionObserverOperationWithoutResult() {
+      @Override
+      public void call(RegionObserver observer) throws IOException {
+        observer.preWALAppend(this, key, edit);
+      }
+    });
   }
 
   public Message preEndpointInvocation(final Service service, final String methodName,

@@ -407,6 +407,8 @@ public class FanOutOneBlockAsyncDFSOutput implements AsyncFSOutput {
       waitingAckQueue.removeFirst();
       return;
     }
+    // TODO: we should perhaps measure time taken per DN here;
+    //       we could collect statistics per DN, and/or exclude bad nodes in createOutput.
     datanodeList.forEach(ch -> {
       ch.write(headerBuf.retainedDuplicate());
       ch.write(checksumBuf.retainedDuplicate());
@@ -548,6 +550,10 @@ public class FanOutOneBlockAsyncDFSOutput implements AsyncFSOutput {
    */
   @Override
   public void recoverAndClose(CancelableProgressable reporter) throws IOException {
+    if (buf != null) {
+      buf.release();
+      buf = null;
+    }
     datanodeList.forEach(ch -> ch.close());
     datanodeList.forEach(ch -> ch.closeFuture().awaitUninterruptibly());
     endFileLease(client, fileId);

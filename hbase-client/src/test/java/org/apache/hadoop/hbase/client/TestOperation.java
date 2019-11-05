@@ -20,16 +20,16 @@ package org.apache.hadoop.hbase.client;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellComparatorImpl;
 import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.CompareOperator;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.KeyValue;
@@ -38,7 +38,6 @@ import org.apache.hadoop.hbase.filter.ColumnCountGetFilter;
 import org.apache.hadoop.hbase.filter.ColumnPaginationFilter;
 import org.apache.hadoop.hbase.filter.ColumnPrefixFilter;
 import org.apache.hadoop.hbase.filter.ColumnRangeFilter;
-import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.DependentColumnFilter;
 import org.apache.hadoop.hbase.filter.FamilyFilter;
 import org.apache.hadoop.hbase.filter.Filter;
@@ -62,10 +61,14 @@ import org.apache.hadoop.hbase.testclassification.ClientTests;
 import org.apache.hadoop.hbase.testclassification.SmallTests;
 import org.apache.hadoop.hbase.util.BuilderStyleTest;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.GsonUtil;
 import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+
+import org.apache.hbase.thirdparty.com.google.common.reflect.TypeToken;
+import org.apache.hbase.thirdparty.com.google.gson.Gson;
 
 /**
  * Run tests that use the functionality of the Operation superclass for
@@ -73,7 +76,6 @@ import org.junit.experimental.categories.Category;
  */
 @Category({ClientTests.class, SmallTests.class})
 public class TestOperation {
-
   @ClassRule
   public static final HBaseClassTestRule CLASS_RULE =
       HBaseClassTestRule.forClass(TestOperation.class);
@@ -83,7 +85,7 @@ public class TestOperation {
   private static byte [] QUALIFIER = Bytes.toBytes("testQualifier");
   private static byte [] VALUE = Bytes.toBytes("testValue");
 
-  private static ObjectMapper mapper = new ObjectMapper();
+  private static Gson GSON = GsonUtil.createGson().create();
 
   private static List<Long> TS_LIST = Arrays.asList(2L, 3L, 5L);
   private static TimestampsFilter TS_FILTER = new TimestampsFilter(TS_LIST);
@@ -158,7 +160,7 @@ public class TestOperation {
   private static String STR_FIRST_KEY_ONLY_FILTER =
       FIRST_KEY_ONLY_FILTER.getClass().getSimpleName();
 
-  private static CompareOp CMP_OP = CompareOp.EQUAL;
+  private static CompareOperator CMP_OP = CompareOperator.EQUAL;
   private static byte[] CMP_VALUE = Bytes.toBytes("value");
   private static BinaryComparator BC = new BinaryComparator(CMP_VALUE);
   private static DependentColumnFilter DC_FILTER =
@@ -281,17 +283,19 @@ public class TestOperation {
   /**
    * Test the client Operations' JSON encoding to ensure that produced JSON is
    * parseable and that the details are present and not corrupted.
-   * @throws IOException
+   *
+   * @throws IOException if the JSON conversion fails
    */
   @Test
-  public void testOperationJSON()
-      throws IOException {
+  public void testOperationJSON() throws IOException {
     // produce a Scan Operation
     Scan scan = new Scan(ROW);
     scan.addColumn(FAMILY, QUALIFIER);
     // get its JSON representation, and parse it
     String json = scan.toJSON();
-    Map<String, Object> parsedJSON = mapper.readValue(json, HashMap.class);
+    Type typeOfHashMap = new TypeToken<Map<String, Object>>() {
+    }.getType();
+    Map<String, Object> parsedJSON = GSON.fromJson(json, typeOfHashMap);
     // check for the row
     assertEquals("startRow incorrect in Scan.toJSON()",
         Bytes.toStringBinary(ROW), parsedJSON.get("startRow"));
@@ -309,7 +313,7 @@ public class TestOperation {
     get.addColumn(FAMILY, QUALIFIER);
     // get its JSON representation, and parse it
     json = get.toJSON();
-    parsedJSON = mapper.readValue(json, HashMap.class);
+    parsedJSON = GSON.fromJson(json, typeOfHashMap);
     // check for the row
     assertEquals("row incorrect in Get.toJSON()",
         Bytes.toStringBinary(ROW), parsedJSON.get("row"));
@@ -327,7 +331,7 @@ public class TestOperation {
     put.addColumn(FAMILY, QUALIFIER, VALUE);
     // get its JSON representation, and parse it
     json = put.toJSON();
-    parsedJSON = mapper.readValue(json, HashMap.class);
+    parsedJSON = GSON.fromJson(json, typeOfHashMap);
     // check for the row
     assertEquals("row absent in Put.toJSON()",
         Bytes.toStringBinary(ROW), parsedJSON.get("row"));
@@ -340,15 +344,15 @@ public class TestOperation {
     assertEquals("Qualifier incorrect in Put.toJSON()",
         Bytes.toStringBinary(QUALIFIER),
         kvMap.get("qualifier"));
-    assertEquals("Value length incorrect in Put.toJSON()",
-        VALUE.length, kvMap.get("vlen"));
+    assertEquals("Value length incorrect in Put.toJSON()", VALUE.length,
+      ((Number) kvMap.get("vlen")).intValue());
 
     // produce a Delete operation
     Delete delete = new Delete(ROW);
     delete.addColumn(FAMILY, QUALIFIER);
     // get its JSON representation, and parse it
     json = delete.toJSON();
-    parsedJSON = mapper.readValue(json, HashMap.class);
+    parsedJSON = GSON.fromJson(json, typeOfHashMap);
     // check for the row
     assertEquals("row absent in Delete.toJSON()",
         Bytes.toStringBinary(ROW), parsedJSON.get("row"));
@@ -423,18 +427,17 @@ public class TestOperation {
 
     // TODO: We should ensure all subclasses of Operation is checked.
     Class[] classes = new Class[] {
-        Operation.class,
-        OperationWithAttributes.class,
-        Mutation.class,
-        Query.class,
-        Delete.class,
-        Increment.class,
-        Append.class,
-        Put.class,
-        Get.class,
-        Scan.class};
+      Operation.class,
+      OperationWithAttributes.class,
+      Mutation.class,
+      Query.class,
+      Delete.class,
+      Increment.class,
+      Append.class,
+      Put.class,
+      Get.class,
+      Scan.class};
 
     BuilderStyleTest.assertClassesAreBuilderStyle(classes);
   }
-
 }

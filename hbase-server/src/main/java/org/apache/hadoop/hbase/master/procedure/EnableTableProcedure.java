@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,7 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.master.procedure;
 
 import java.io.IOException;
@@ -52,44 +51,34 @@ public class EnableTableProcedure
   private static final Logger LOG = LoggerFactory.getLogger(EnableTableProcedure.class);
 
   private TableName tableName;
-  private boolean skipTableStateCheck;
-
-  private Boolean traceEnabled = null;
 
   public EnableTableProcedure() {
-    super();
   }
 
   /**
    * Constructor
    * @param env MasterProcedureEnv
    * @param tableName the table to operate on
-   * @param skipTableStateCheck whether to check table state
    */
-  public EnableTableProcedure(final MasterProcedureEnv env, final TableName tableName,
-      final boolean skipTableStateCheck) {
-    this(env, tableName, skipTableStateCheck, null);
+  public EnableTableProcedure(MasterProcedureEnv env, TableName tableName) {
+    this(env, tableName, null);
   }
 
   /**
    * Constructor
    * @param env MasterProcedureEnv
    * @param tableName the table to operate on
-   * @param skipTableStateCheck whether to check table state
    */
-  public EnableTableProcedure(final MasterProcedureEnv env, final TableName tableName,
-      final boolean skipTableStateCheck, final ProcedurePrepareLatch syncLatch) {
+  public EnableTableProcedure(MasterProcedureEnv env, TableName tableName,
+      ProcedurePrepareLatch syncLatch) {
     super(env, syncLatch);
     this.tableName = tableName;
-    this.skipTableStateCheck = skipTableStateCheck;
   }
 
   @Override
   protected Flow executeFromState(final MasterProcedureEnv env, final EnableTableState state)
       throws InterruptedException {
-    if (isTraceEnabled()) {
-      LOG.trace(this + " execute state=" + state);
-    }
+    LOG.trace("{} execute state={}", this, state);
 
     try {
       switch (state) {
@@ -268,29 +257,27 @@ public class EnableTableProcedure
   }
 
   @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer)
-      throws IOException {
+  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
     super.serializeStateData(serializer);
 
+    // the skipTableStateCheck is false so we still need to set it...
+    @SuppressWarnings("deprecation")
     MasterProcedureProtos.EnableTableStateData.Builder enableTableMsg =
-        MasterProcedureProtos.EnableTableStateData.newBuilder()
-            .setUserInfo(MasterProcedureUtil.toProtoUserInfo(getUser()))
-            .setTableName(ProtobufUtil.toProtoTableName(tableName))
-            .setSkipTableStateCheck(skipTableStateCheck);
+      MasterProcedureProtos.EnableTableStateData.newBuilder()
+        .setUserInfo(MasterProcedureUtil.toProtoUserInfo(getUser()))
+        .setTableName(ProtobufUtil.toProtoTableName(tableName)).setSkipTableStateCheck(false);
 
     serializer.serialize(enableTableMsg.build());
   }
 
   @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer)
-      throws IOException {
+  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
     super.deserializeStateData(serializer);
 
     MasterProcedureProtos.EnableTableStateData enableTableMsg =
-        serializer.deserialize(MasterProcedureProtos.EnableTableStateData.class);
+      serializer.deserialize(MasterProcedureProtos.EnableTableStateData.class);
     setUser(MasterProcedureUtil.toUserInfo(enableTableMsg.getUserInfo()));
     tableName = ProtobufUtil.toTableName(enableTableMsg.getTableName());
-    skipTableStateCheck = enableTableMsg.getSkipTableStateCheck();
   }
 
   @Override
@@ -318,7 +305,7 @@ public class EnableTableProcedure
     if (!MetaTableAccessor.tableExists(env.getMasterServices().getConnection(), tableName)) {
       setFailure("master-enable-table", new TableNotFoundException(tableName));
       canTableBeEnabled = false;
-    } else if (!skipTableStateCheck) {
+    } else {
       // There could be multiple client requests trying to disable or enable
       // the table at the same time. Ensure only the first request is honored
       // After that, no other requests can be accepted until the table reaches
@@ -331,7 +318,7 @@ public class EnableTableProcedure
       TableStateManager tsm = env.getMasterServices().getTableStateManager();
       TableState ts = tsm.getTableState(tableName);
       if(!ts.isDisabled()){
-        LOG.info("Not DISABLED tableState=" + ts + "; skipping enable");
+        LOG.info("Not DISABLED tableState={}; skipping enable; {}", ts.getState(), this);
         setFailure("master-enable-table", new TableNotDisabledException(ts.toString()));
         canTableBeEnabled = false;
       }
@@ -396,18 +383,6 @@ public class EnableTableProcedure
   private void postEnable(final MasterProcedureEnv env, final EnableTableState state)
       throws IOException, InterruptedException {
     runCoprocessorAction(env, state);
-  }
-
-  /**
-   * The procedure could be restarted from a different machine. If the variable is null, we need to
-   * retrieve it.
-   * @return traceEnabled
-   */
-  private Boolean isTraceEnabled() {
-    if (traceEnabled == null) {
-      traceEnabled = LOG.isTraceEnabled();
-    }
-    return traceEnabled;
   }
 
   /**

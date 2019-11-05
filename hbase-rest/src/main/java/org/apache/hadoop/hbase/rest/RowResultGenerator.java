@@ -26,6 +26,7 @@ import java.util.NoSuchElementException;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
+import org.apache.hadoop.hbase.security.AccessDeniedException;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Table;
@@ -61,7 +62,7 @@ public class RowResultGenerator extends ResultGenerator {
         }
       }
       get.setTimeRange(rowspec.getStartTime(), rowspec.getEndTime());
-      get.setMaxVersions(rowspec.getMaxVersions());
+      get.readVersions(rowspec.getMaxVersions());
       if (filter != null) {
         get.setFilter(filter);
       }
@@ -78,6 +79,10 @@ public class RowResultGenerator extends ResultGenerator {
       // help to avoid confusion by leaving a record of what happened here in
       // the log.
       LOG.warn(StringUtils.stringifyException(e));
+      // Lets get the exception rethrown to get a more meaningful error message than 404
+      if (e instanceof AccessDeniedException) {
+        throw e;
+      }
     } finally {
       table.close();
     }

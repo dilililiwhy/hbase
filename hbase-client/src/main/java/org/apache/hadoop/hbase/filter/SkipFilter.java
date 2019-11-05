@@ -79,12 +79,6 @@ public class SkipFilter extends FilterBase {
     return false;
   }
 
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) throws IOException {
-    return filterCell(c);
-  }
-
   @Override
   public ReturnCode filterCell(final Cell c) throws IOException {
     ReturnCode rc = filter.filterCell(c);
@@ -165,11 +159,7 @@ public class SkipFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj.getClass() == this.getClass()))) {
-      return false;
-    }
-    SkipFilter f = (SkipFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override

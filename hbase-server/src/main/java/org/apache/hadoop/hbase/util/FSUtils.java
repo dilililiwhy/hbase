@@ -49,6 +49,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -67,14 +68,13 @@ import org.apache.hadoop.hbase.HDFSBlocksDistribution;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.RegionInfo;
+import org.apache.hadoop.hbase.client.RegionInfoBuilder;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.fs.HFileSystem;
 import org.apache.hadoop.hbase.io.HFileLink;
 import org.apache.hadoop.hbase.master.HMaster;
-import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.StoreFileInfo;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
-import org.apache.hadoop.hbase.util.HBaseFsck.ErrorReporter;
 import org.apache.hadoop.hdfs.DFSClient;
 import org.apache.hadoop.hdfs.DFSHedgedReadMetrics;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
@@ -266,9 +266,7 @@ public abstract class FSUtils extends CommonFSUtils {
     } catch (Exception e) {
       LOG.error("file system close failed: ", e);
     }
-    IOException io = new IOException("File system is not available");
-    io.initCause(exception);
-    throw io;
+    throw new IOException("File system is not available", exception);
   }
 
   /**
@@ -423,23 +421,29 @@ public abstract class FSUtils extends CommonFSUtils {
       boolean message, int wait, int retries)
   throws IOException, DeserializationException {
     String version = getVersion(fs, rootdir);
+    String msg;
     if (version == null) {
       if (!metaRegionExists(fs, rootdir)) {
         // rootDir is empty (no version file and no root region)
         // just create new version file (HBASE-1195)
         setVersion(fs, rootdir, wait, retries);
         return;
+      } else {
+        msg = "hbase.version file is missing. Is your hbase.rootdir valid? " +
+            "You can restore hbase.version file by running 'HBCK2 filesystem -fix'. " +
+            "See https://github.com/apache/hbase-operator-tools/tree/master/hbase-hbck2";
       }
-    } else if (version.compareTo(HConstants.FILE_SYSTEM_VERSION) == 0) return;
+    } else if (version.compareTo(HConstants.FILE_SYSTEM_VERSION) == 0) {
+      return;
+    } else {
+      msg = "HBase file layout needs to be upgraded. Current filesystem version is " + version +
+          " but software requires version " + HConstants.FILE_SYSTEM_VERSION +
+          ". Consult http://hbase.apache.org/book.html for further information about " +
+          "upgrading HBase.";
+    }
 
     // version is deprecated require migration
     // Output on stdout so user sees it in terminal.
-    String msg = "HBase file layout needs to be upgraded."
-      + " You have version " + version
-      + " and I want version " + HConstants.FILE_SYSTEM_VERSION
-      + ". Consult http://hbase.apache.org/book.html for further information about upgrading HBase."
-      + " Is your hbase.rootdir valid? If so, you may need to run "
-      + "'hbase hbck -fixVersionFile'.";
     if (message) {
       System.out.println("WARNING! " + msg);
     }
@@ -708,17 +712,12 @@ public abstract class FSUtils extends CommonFSUtils {
 
   /**
    * Checks if meta region exists
-   *
    * @param fs file system
-   * @param rootdir root directory of HBase installation
+   * @param rootDir root directory of HBase installation
    * @return true if exists
-   * @throws IOException e
    */
-  @SuppressWarnings("deprecation")
-  public static boolean metaRegionExists(FileSystem fs, Path rootdir)
-  throws IOException {
-    Path metaRegionDir =
-      HRegion.getRegionDir(rootdir, HRegionInfo.FIRST_META_REGIONINFO);
+  public static boolean metaRegionExists(FileSystem fs, Path rootDir) throws IOException {
+    Path metaRegionDir = getRegionDirFromRootDir(rootDir, RegionInfoBuilder.FIRST_META_REGIONINFO);
     return fs.exists(metaRegionDir);
   }
 
@@ -1034,7 +1033,7 @@ public abstract class FSUtils extends CommonFSUtils {
     // assumes we are in a table dir.
     List<FileStatus> rds = listStatusWithStatusFilter(fs, tableDir, new RegionDirFilter(fs));
     if (rds == null) {
-      return new ArrayList<>();
+      return Collections.emptyList();
     }
     List<Path> regionDirs = new ArrayList<>(rds.size());
     for (FileStatus rdfs: rds) {
@@ -1044,7 +1043,11 @@ public abstract class FSUtils extends CommonFSUtils {
     return regionDirs;
   }
 
-  public static Path getRegionDir(Path tableDir, RegionInfo region) {
+  public static Path getRegionDirFromRootDir(Path rootDir, RegionInfo region) {
+    return getRegionDirFromTableDir(getTableDir(rootDir, region.getTable()), region);
+  }
+
+  public static Path getRegionDirFromTableDir(Path tableDir, RegionInfo region) {
     return new Path(tableDir, ServerRegionReplicaUtil.getRegionInfoForFs(region).getEncodedName());
   }
 
@@ -1101,7 +1104,7 @@ public abstract class FSUtils extends CommonFSUtils {
   public static List<Path> getReferenceFilePaths(final FileSystem fs, final Path familyDir) throws IOException {
     List<FileStatus> fds = listStatusWithStatusFilter(fs, familyDir, new ReferenceFileFilter(fs));
     if (fds == null) {
-      return new ArrayList<>();
+      return Collections.emptyList();
     }
     List<Path> referenceFiles = new ArrayList<>(fds.size());
     for (FileStatus fdfs: fds) {
@@ -1175,6 +1178,17 @@ public abstract class FSUtils extends CommonFSUtils {
   }
 
   /**
+   * Called every so-often by storefile map builder getTableStoreFilePathMap to
+   * report progress.
+   */
+  interface ProgressReporter {
+    /**
+     * @param status File or directory we are about to process.
+     */
+    void progress(FileStatus status);
+  }
+
+  /**
    * Runs through the HBase rootdir/tablename and creates a reverse lookup map for
    * table StoreFile names to the full Path.
    * <br>
@@ -1193,7 +1207,8 @@ public abstract class FSUtils extends CommonFSUtils {
   public static Map<String, Path> getTableStoreFilePathMap(Map<String, Path> map,
   final FileSystem fs, final Path hbaseRootDir, TableName tableName)
   throws IOException, InterruptedException {
-    return getTableStoreFilePathMap(map, fs, hbaseRootDir, tableName, null, null, null);
+    return getTableStoreFilePathMap(map, fs, hbaseRootDir, tableName, null, null,
+        (ProgressReporter)null);
   }
 
   /**
@@ -1213,15 +1228,55 @@ public abstract class FSUtils extends CommonFSUtils {
    * @param tableName name of the table to scan.
    * @param sfFilter optional path filter to apply to store files
    * @param executor optional executor service to parallelize this operation
-   * @param errors ErrorReporter instance or null
+   * @param progressReporter Instance or null; gets called every time we move to new region of
+   *   family dir and for each store file.
+   * @return Map keyed by StoreFile name with a value of the full Path.
+   * @throws IOException When scanning the directory fails.
+   * @deprecated Since 2.3.0. For removal in hbase4. Use ProgressReporter override instead.
+   */
+  @Deprecated
+  public static Map<String, Path> getTableStoreFilePathMap(Map<String, Path> resultMap,
+      final FileSystem fs, final Path hbaseRootDir, TableName tableName, final PathFilter sfFilter,
+      ExecutorService executor, final HbckErrorReporter progressReporter)
+      throws IOException, InterruptedException {
+    return getTableStoreFilePathMap(resultMap, fs, hbaseRootDir, tableName, sfFilter, executor,
+        new ProgressReporter() {
+          @Override
+          public void progress(FileStatus status) {
+            // status is not used in this implementation.
+            progressReporter.progress();
+          }
+        });
+  }
+
+  /*
+   * Runs through the HBase rootdir/tablename and creates a reverse lookup map for
+   * table StoreFile names to the full Path.  Note that because this method can be called
+   * on a 'live' HBase system that we will skip files that no longer exist by the time
+   * we traverse them and similarly the user of the result needs to consider that some
+   * entries in this map may not exist by the time this call completes.
+   * <br>
+   * Example...<br>
+   * Key = 3944417774205889744  <br>
+   * Value = hdfs://localhost:51169/user/userid/-ROOT-/70236052/info/3944417774205889744
+   *
+   * @param resultMap map to add values.  If null, this method will create and populate one
+   *   to return
+   * @param fs  The file system to use.
+   * @param hbaseRootDir  The root directory to scan.
+   * @param tableName name of the table to scan.
+   * @param sfFilter optional path filter to apply to store files
+   * @param executor optional executor service to parallelize this operation
+   * @param progressReporter Instance or null; gets called every time we move to new region of
+   *   family dir and for each store file.
    * @return Map keyed by StoreFile name with a value of the full Path.
    * @throws IOException When scanning the directory fails.
    * @throws InterruptedException
    */
-  public static Map<String, Path> getTableStoreFilePathMap(
-      Map<String, Path> resultMap,
+  public static Map<String, Path> getTableStoreFilePathMap(Map<String, Path> resultMap,
       final FileSystem fs, final Path hbaseRootDir, TableName tableName, final PathFilter sfFilter,
-      ExecutorService executor, final ErrorReporter errors) throws IOException, InterruptedException {
+      ExecutorService executor, final ProgressReporter progressReporter)
+    throws IOException, InterruptedException {
 
     final Map<String, Path> finalResultMap =
         resultMap == null ? new ConcurrentHashMap<>(128, 0.75f, 32) : resultMap;
@@ -1242,8 +1297,8 @@ public abstract class FSUtils extends CommonFSUtils {
       final List<Future<?>> futures = new ArrayList<>(regionDirs.size());
 
       for (FileStatus regionDir : regionDirs) {
-        if (null != errors) {
-          errors.progress();
+        if (null != progressReporter) {
+          progressReporter.progress(regionDir);
         }
         final Path dd = regionDir.getPath();
 
@@ -1266,8 +1321,8 @@ public abstract class FSUtils extends CommonFSUtils {
                 return;
               }
               for (FileStatus familyDir : familyDirs) {
-                if (null != errors) {
-                  errors.progress();
+                if (null != progressReporter) {
+                  progressReporter.progress(familyDir);
                 }
                 Path family = familyDir.getPath();
                 if (family.getName().equals(HConstants.RECOVERED_EDITS_DIR)) {
@@ -1277,8 +1332,8 @@ public abstract class FSUtils extends CommonFSUtils {
                 // put in map
                 FileStatus[] familyStatus = fs.listStatus(family);
                 for (FileStatus sfStatus : familyStatus) {
-                  if (null != errors) {
-                    errors.progress();
+                  if (null != progressReporter) {
+                    progressReporter.progress(sfStatus);
                   }
                   Path sf = sfStatus.getPath();
                   if (sfFilter == null || sfFilter.accept(sf)) {
@@ -1357,12 +1412,11 @@ public abstract class FSUtils extends CommonFSUtils {
    * @param hbaseRootDir  The root directory to scan.
    * @return Map keyed by StoreFile name with a value of the full Path.
    * @throws IOException When scanning the directory fails.
-   * @throws InterruptedException
    */
-  public static Map<String, Path> getTableStoreFilePathMap(
-    final FileSystem fs, final Path hbaseRootDir)
+  public static Map<String, Path> getTableStoreFilePathMap(final FileSystem fs,
+      final Path hbaseRootDir)
   throws IOException, InterruptedException {
-    return getTableStoreFilePathMap(fs, hbaseRootDir, null, null, null);
+    return getTableStoreFilePathMap(fs, hbaseRootDir, null, null, (ProgressReporter)null);
   }
 
   /**
@@ -1377,14 +1431,49 @@ public abstract class FSUtils extends CommonFSUtils {
    * @param hbaseRootDir  The root directory to scan.
    * @param sfFilter optional path filter to apply to store files
    * @param executor optional executor service to parallelize this operation
-   * @param errors ErrorReporter instance or null
+   * @param progressReporter Instance or null; gets called every time we move to new region of
+   *   family dir and for each store file.
+   * @return Map keyed by StoreFile name with a value of the full Path.
+   * @throws IOException When scanning the directory fails.
+   * @deprecated Since 2.3.0. Will be removed in hbase4. Used {@link
+   *   #getTableStoreFilePathMap(FileSystem, Path, PathFilter, ExecutorService, ProgressReporter)}
+   */
+  @Deprecated
+  public static Map<String, Path> getTableStoreFilePathMap(final FileSystem fs,
+      final Path hbaseRootDir, PathFilter sfFilter, ExecutorService executor,
+      HbckErrorReporter progressReporter)
+    throws IOException, InterruptedException {
+    return getTableStoreFilePathMap(fs, hbaseRootDir, sfFilter, executor,
+        new ProgressReporter() {
+          @Override
+          public void progress(FileStatus status) {
+            // status is not used in this implementation.
+            progressReporter.progress();
+          }
+        });
+  }
+
+  /**
+   * Runs through the HBase rootdir and creates a reverse lookup map for
+   * table StoreFile names to the full Path.
+   * <br>
+   * Example...<br>
+   * Key = 3944417774205889744  <br>
+   * Value = hdfs://localhost:51169/user/userid/-ROOT-/70236052/info/3944417774205889744
+   *
+   * @param fs  The file system to use.
+   * @param hbaseRootDir  The root directory to scan.
+   * @param sfFilter optional path filter to apply to store files
+   * @param executor optional executor service to parallelize this operation
+   * @param progressReporter Instance or null; gets called every time we move to new region of
+   *   family dir and for each store file.
    * @return Map keyed by StoreFile name with a value of the full Path.
    * @throws IOException When scanning the directory fails.
    * @throws InterruptedException
    */
   public static Map<String, Path> getTableStoreFilePathMap(
     final FileSystem fs, final Path hbaseRootDir, PathFilter sfFilter,
-    ExecutorService executor, ErrorReporter errors)
+        ExecutorService executor, ProgressReporter progressReporter)
   throws IOException, InterruptedException {
     ConcurrentHashMap<String, Path> map = new ConcurrentHashMap<>(1024, 0.75f, 32);
 
@@ -1394,7 +1483,7 @@ public abstract class FSUtils extends CommonFSUtils {
     // only include the directory paths to tables
     for (Path tableDir : FSUtils.getTableDirs(fs, hbaseRootDir)) {
       getTableStoreFilePathMap(map, fs, hbaseRootDir,
-          FSUtils.getTableName(tableDir), sfFilter, executor, errors);
+          FSUtils.getTableName(tableDir), sfFilter, executor, progressReporter);
     }
     return map;
   }
@@ -1632,7 +1721,8 @@ public abstract class FSUtils extends CommonFSUtils {
     // run in multiple threads
     ThreadPoolExecutor tpe = new ThreadPoolExecutor(threadPoolSize,
         threadPoolSize, 60, TimeUnit.SECONDS,
-        new ArrayBlockingQueue<>(statusList.length));
+        new ArrayBlockingQueue<>(statusList.length),
+        Threads.newDaemonThreadFactory("FSRegionQuery"));
     try {
       // ignore all file status items that are not of interest
       for (FileStatus regionStatus : statusList) {

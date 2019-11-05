@@ -21,6 +21,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -37,6 +38,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hbase.client.Admin;
 import org.apache.hadoop.hbase.client.Connection;
+import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.master.MetricsMaster;
@@ -110,12 +112,55 @@ public class SnapshotQuotaObserverChore extends ScheduledChore {
       metrics.incrementSnapshotFetchTime((System.nanoTime() - start) / 1_000_000);
     }
 
+    // Remove old table snapshots data
+    pruneTableSnapshots(snapshotsToComputeSize);
+
+    // Remove old namespace snapshots data
+    pruneNamespaceSnapshots(snapshotsToComputeSize);
+
     // For each table, compute the size of each snapshot
     Map<String,Long> namespaceSnapshotSizes = computeSnapshotSizes(snapshotsToComputeSize);
 
     // Write the size data by namespaces to the quota table.
     // We need to do this "globally" since each FileArchiverNotifier is limited to its own Table.
     persistSnapshotSizesForNamespaces(namespaceSnapshotSizes);
+  }
+
+  /**
+   * Removes the snapshot entries that are present in Quota table but not in snapshotsToComputeSize
+   *
+   * @param snapshotsToComputeSize list of snapshots to be persisted
+   */
+  void pruneTableSnapshots(Multimap<TableName, String> snapshotsToComputeSize) throws IOException {
+    Multimap<TableName, String> existingSnapshotEntries = QuotaTableUtil.getTableSnapshots(conn);
+    Multimap<TableName, String> snapshotEntriesToRemove = HashMultimap.create();
+    for (Entry<TableName, Collection<String>> entry : existingSnapshotEntries.asMap().entrySet()) {
+      TableName tn = entry.getKey();
+      Set<String> setOfSnapshots = new HashSet<>(entry.getValue());
+      for (String snapshot : snapshotsToComputeSize.get(tn)) {
+        setOfSnapshots.remove(snapshot);
+      }
+
+      for (String snapshot : setOfSnapshots) {
+        snapshotEntriesToRemove.put(tn, snapshot);
+      }
+    }
+    removeExistingTableSnapshotSizes(snapshotEntriesToRemove);
+  }
+
+  /**
+   * Removes the snapshot entries that are present in Quota table but not in snapshotsToComputeSize
+   *
+   * @param snapshotsToComputeSize list of snapshots to be persisted
+   */
+  void pruneNamespaceSnapshots(Multimap<TableName, String> snapshotsToComputeSize)
+      throws IOException {
+    Set<String> existingSnapshotEntries = QuotaTableUtil.getNamespaceSnapshots(conn);
+    for (TableName tableName : snapshotsToComputeSize.keySet()) {
+      existingSnapshotEntries.remove(tableName.getNamespaceAsString());
+    }
+    // here existingSnapshotEntries is left with the entries to be removed
+    removeExistingNamespaceSnapshotSizes(existingSnapshotEntries);
   }
 
   /**
@@ -131,17 +176,19 @@ public class SnapshotQuotaObserverChore extends ScheduledChore {
     try (Admin admin = conn.getAdmin()) {
       // Pull all of the tables that have quotas (direct, or from namespace)
       for (QuotaSettings qs : QuotaRetriever.open(conf, filter)) {
-        String ns = qs.getNamespace();
-        TableName tn = qs.getTableName();
-        if ((null == ns && null == tn) || (null != ns && null != tn)) {
-          throw new IllegalStateException(
-              "Expected only one of namespace and tablename to be null");
-        }
-        // Collect either the table name itself, or all of the tables in the namespace
-        if (null != ns) {
-          tablesToFetchSnapshotsFrom.addAll(Arrays.asList(admin.listTableNamesByNamespace(ns)));
-        } else {
-          tablesToFetchSnapshotsFrom.add(tn);
+        if (qs.getQuotaType() == QuotaType.SPACE) {
+          String ns = qs.getNamespace();
+          TableName tn = qs.getTableName();
+          if ((null == ns && null == tn) || (null != ns && null != tn)) {
+            throw new IllegalStateException(
+                "Expected either one of namespace and tablename to be null but not both");
+          }
+          // Collect either the table name itself, or all of the tables in the namespace
+          if (null != ns) {
+            tablesToFetchSnapshotsFrom.addAll(Arrays.asList(admin.listTableNamesByNamespace(ns)));
+          } else {
+            tablesToFetchSnapshotsFrom.add(tn);
+          }
         }
       }
       // Fetch all snapshots that were created from these tables
@@ -215,6 +262,24 @@ public class SnapshotQuotaObserverChore extends ScheduledChore {
       quotaTable.put(snapshotSizesByNamespace.entrySet().stream()
           .map(e -> QuotaTableUtil.createPutForNamespaceSnapshotSize(e.getKey(), e.getValue()))
           .collect(Collectors.toList()));
+    }
+  }
+
+  void removeExistingTableSnapshotSizes(Multimap<TableName, String> snapshotEntriesToRemove)
+      throws IOException {
+    removeExistingSnapshotSizes(
+        QuotaTableUtil.createDeletesForExistingTableSnapshotSizes(snapshotEntriesToRemove));
+  }
+
+  void removeExistingNamespaceSnapshotSizes(Set<String> snapshotEntriesToRemove)
+      throws IOException {
+    removeExistingSnapshotSizes(
+        QuotaTableUtil.createDeletesForExistingNamespaceSnapshotSizes(snapshotEntriesToRemove));
+  }
+
+  void removeExistingSnapshotSizes(List<Delete> deletes) throws IOException {
+    try (Table quotaTable = conn.getTable(QuotaUtil.QUOTA_TABLE_NAME)) {
+      quotaTable.delete(deletes);
     }
   }
 

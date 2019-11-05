@@ -28,13 +28,13 @@ import org.apache.hadoop.hbase.HBaseZKTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.testclassification.SmallTests;
 import org.apache.hadoop.hbase.testclassification.ZKTests;
+import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 @Category({ ZKTests.class, SmallTests.class })
 public class TestZKMainServer {
-
   @ClassRule
   public static final HBaseClassTestRule CLASS_RULE =
       HBaseClassTestRule.forClass(TestZKMainServer.class);
@@ -43,10 +43,9 @@ public class TestZKMainServer {
   // http://stackoverflow.com/questions/309396/java-how-to-test-methods-that-call-system-exit
   protected static class ExitException extends SecurityException {
     private static final long serialVersionUID = 1L;
-    private final int status;
-    public ExitException(int status) {
+
+    ExitException() {
       super("There is no escape!");
-      this.status = status;
     }
   }
 
@@ -64,7 +63,7 @@ public class TestZKMainServer {
     @Override
     public void checkExit(int status) {
       super.checkExit(status);
-      throw new ExitException(status);
+      throw new ExitException();
     }
   }
 
@@ -115,11 +114,36 @@ public class TestZKMainServer {
     // multiple servers with its own port
     c.set("hbase.zookeeper.quorum", "example1.com:5678,example2.com:9012,example3.com:3456");
     ensemble = parser.parse(c);
-    assertEquals(ensemble, "example1.com:5678,example2.com:9012,example3.com:3456");
+    assertEquals("example1.com:5678,example2.com:9012,example3.com:3456", ensemble);
 
     // some servers without its own port, which will be assigned the default client port
     c.set("hbase.zookeeper.quorum", "example1.com:5678,example2.com:9012,example3.com");
     ensemble = parser.parse(c);
     assertEquals(ensemble, "example1.com:5678,example2.com:9012,example3.com:" + port);
+
+    // multiple servers(IPv6) with its own port
+    c.set("hbase.zookeeper.quorum", "[2001:db8:1::242:ac11:2]:2181," +
+                                    "[2001:db8:1::242:ac11:3]:5678");
+    ensemble = parser.parse(c);
+    assertEquals("[2001:db8:1::242:ac11:2]:2181," +
+                 "[2001:db8:1::242:ac11:3]:5678", ensemble);
+
+    // some servers(IPv6) without its own port, which will be assigned the default client port
+    c.set("hbase.zookeeper.quorum", "[1001:db8:1::242:ac11:8], [2001:db8:1::242:df23:2]:9876," +
+                                    "[2001:db8:1::242:ac11:3]:5678");
+    ensemble = parser.parse(c);
+    assertEquals("[1001:db8:1::242:ac11:8]:1234, [2001:db8:1::242:df23:2]:9876," +
+                 "[2001:db8:1::242:ac11:3]:5678", ensemble);
+
+    //a bad case
+    try {
+      // some servers(IPv6) with an invaild Ipv6 address in it
+      c.set("hbase.zookeeper.quorum", "[1001:db8:1::242:ac11:8], [2001:db8:1::242:df23:2]:9876," +
+              "[1001:db8:1::242:ac11:8:89:67]:5678");
+      parser.parse(c);
+      Assert.fail("IPv6 address should be 8 groups.");
+    } catch (IllegalArgumentException e) {
+      //expected
+    }
   }
 }

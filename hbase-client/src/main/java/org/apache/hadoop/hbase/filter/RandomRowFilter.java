@@ -70,12 +70,6 @@ public class RandomRowFilter extends FilterBase {
     return false;
   }
 
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
-  }
-
   @Override
   public ReturnCode filterCell(final Cell c) {
     if (filterOutRow) {
@@ -158,11 +152,7 @@ public class RandomRowFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof RandomRowFilter))) {
-      return false;
-    }
-    RandomRowFilter f = (RandomRowFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override

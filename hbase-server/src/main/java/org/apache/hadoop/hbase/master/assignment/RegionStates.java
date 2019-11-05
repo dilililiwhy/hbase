@@ -176,12 +176,14 @@ public class RegionStates {
     return regions;
   }
 
-  Collection<RegionStateNode> getRegionStateNodes() {
-    return regionsMap.values();
+  /** @return A view of region state nodes for all the regions. */
+  public Collection<RegionStateNode> getRegionStateNodes() {
+    return Collections.unmodifiableCollection(regionsMap.values());
   }
 
+  /** @return A snapshot of region state nodes for all the regions. */
   public ArrayList<RegionState> getRegionStates() {
-    final ArrayList<RegionState> regions = new ArrayList<RegionState>(regionsMap.size());
+    final ArrayList<RegionState> regions = new ArrayList<>(regionsMap.size());
     for (RegionStateNode node: regionsMap.values()) {
       regions.add(node.toRegionState());
     }
@@ -348,27 +350,15 @@ public class RegionStates {
     if (LOG.isTraceEnabled()) {
       LOG.trace("WORKING ON " + node + " " + node.getRegionInfo());
     }
-    if (node.isInState(State.SPLIT)) return false;
-    if (node.isInState(State.OFFLINE) && !offline) return false;
     final RegionInfo hri = node.getRegionInfo();
+    if (node.isInState(State.SPLIT) || hri.isSplit()) {
+      return false;
+    }
+    if ((node.isInState(State.OFFLINE) || hri.isOffline()) && !offline) {
+      return false;
+    }
     return (!hri.isOffline() && !hri.isSplit()) ||
         ((hri.isOffline() || hri.isSplit()) && offline);
-  }
-
-  /**
-   * Returns the set of regions hosted by the specified server
-   * @param serverName the server we are interested in
-   * @return set of RegionInfo hosted by the specified server
-   */
-  public List<RegionInfo> getServerRegionInfoSet(final ServerName serverName) {
-    ServerStateNode serverInfo = getServerNode(serverName);
-    if (serverInfo == null) {
-      return Collections.emptyList();
-    }
-
-    synchronized (serverInfo) {
-      return serverInfo.getRegionInfoList();
-    }
   }
 
   // ============================================================================================
@@ -466,23 +456,37 @@ public class RegionStates {
   public Map<ServerName, List<RegionInfo>> getSnapShotOfAssignment(
       final Collection<RegionInfo> regions) {
     final Map<ServerName, List<RegionInfo>> result = new HashMap<ServerName, List<RegionInfo>>();
-    for (RegionInfo hri: regions) {
-      final RegionStateNode node = getRegionStateNode(hri);
-      if (node == null) continue;
-
-      // TODO: State.OPEN
-      final ServerName serverName = node.getRegionLocation();
-      if (serverName == null) continue;
-
-      List<RegionInfo> serverRegions = result.get(serverName);
-      if (serverRegions == null) {
-        serverRegions = new ArrayList<RegionInfo>();
-        result.put(serverName, serverRegions);
+    if (regions != null) {
+      for (RegionInfo hri : regions) {
+        final RegionStateNode node = getRegionStateNode(hri);
+        if (node == null) {
+          continue;
+        }
+        createSnapshot(node, result);
       }
-
-      serverRegions.add(node.getRegionInfo());
+    } else {
+      for (RegionStateNode node : regionsMap.values()) {
+        if (node == null) {
+          continue;
+        }
+        createSnapshot(node, result);
+      }
     }
     return result;
+  }
+
+  private void createSnapshot(RegionStateNode node, Map<ServerName, List<RegionInfo>> result) {
+    final ServerName serverName = node.getRegionLocation();
+    if (serverName == null) {
+      return;
+    }
+
+    List<RegionInfo> serverRegions = result.get(serverName);
+    if (serverRegions == null) {
+      serverRegions = new ArrayList<RegionInfo>();
+      result.put(serverName, serverRegions);
+    }
+    serverRegions.add(node.getRegionInfo());
   }
 
   public Map<RegionInfo, ServerName> getRegionAssignments() {
@@ -528,55 +532,40 @@ public class RegionStates {
    * Can't let out original since it can change and at least the load balancer
    * wants to iterate this exported list.  We need to synchronize on regions
    * since all access to this.servers is under a lock on this.regions.
-   * @param forceByCluster a flag to force to aggregate the server-load to the cluster level
-   * @return A clone of current assignments by table.
+   *
+   * @param isByTable If <code>true</code>, return the assignments by table. If <code>false</code>,
+   *                  return the assignments which aggregate the server-load to the cluster level.
+   * @return A clone of current assignments.
    */
-  public Map<TableName, Map<ServerName, List<RegionInfo>>> getAssignmentsByTable(
-      final boolean forceByCluster) {
-    if (!forceByCluster) return getAssignmentsByTable();
-
-    final HashMap<ServerName, List<RegionInfo>> ensemble =
-      new HashMap<ServerName, List<RegionInfo>>(serverMap.size());
-    for (ServerStateNode serverNode: serverMap.values()) {
-      ensemble.put(serverNode.getServerName(), serverNode.getRegionInfoList());
-    }
-
-    // TODO: can we use Collections.singletonMap(HConstants.ENSEMBLE_TABLE_NAME, ensemble)?
-    final Map<TableName, Map<ServerName, List<RegionInfo>>> result =
-      new HashMap<TableName, Map<ServerName, List<RegionInfo>>>(1);
-    result.put(HConstants.ENSEMBLE_TABLE_NAME, ensemble);
-    return result;
-  }
-
-  public Map<TableName, Map<ServerName, List<RegionInfo>>> getAssignmentsByTable() {
+  public Map<TableName, Map<ServerName, List<RegionInfo>>> getAssignmentsForBalancer(
+      boolean isByTable) {
     final Map<TableName, Map<ServerName, List<RegionInfo>>> result = new HashMap<>();
-    for (RegionStateNode node: regionsMap.values()) {
-      Map<ServerName, List<RegionInfo>> tableResult = result.get(node.getTable());
-      if (tableResult == null) {
-        tableResult = new HashMap<ServerName, List<RegionInfo>>();
-        result.put(node.getTable(), tableResult);
-      }
-
-      final ServerName serverName = node.getRegionLocation();
-      if (serverName == null) {
-        LOG.info("Skipping, no server for " + node);
-        continue;
-      }
-      List<RegionInfo> serverResult = tableResult.get(serverName);
-      if (serverResult == null) {
-        serverResult = new ArrayList<RegionInfo>();
-        tableResult.put(serverName, serverResult);
-      }
-
-      serverResult.add(node.getRegionInfo());
-    }
-    // Add online servers with no assignment for the table.
-    for (Map<ServerName, List<RegionInfo>> table: result.values()) {
-        for (ServerName svr : serverMap.keySet()) {
-          if (!table.containsKey(svr)) {
-            table.put(svr, new ArrayList<RegionInfo>());
-          }
+    if (isByTable) {
+      for (RegionStateNode node : regionsMap.values()) {
+        Map<ServerName, List<RegionInfo>> tableResult =
+            result.computeIfAbsent(node.getTable(), t -> new HashMap<>());
+        final ServerName serverName = node.getRegionLocation();
+        if (serverName == null) {
+          LOG.info("Skipping, no server for " + node);
+          continue;
         }
+        List<RegionInfo> serverResult =
+            tableResult.computeIfAbsent(serverName, s -> new ArrayList<>());
+        serverResult.add(node.getRegionInfo());
+      }
+      // Add online servers with no assignment for the table.
+      for (Map<ServerName, List<RegionInfo>> table : result.values()) {
+        for (ServerName serverName : serverMap.keySet()) {
+          table.putIfAbsent(serverName, new ArrayList<>());
+        }
+      }
+    } else {
+      final HashMap<ServerName, List<RegionInfo>> ensemble = new HashMap<>(serverMap.size());
+      for (ServerStateNode serverNode : serverMap.values()) {
+        ensemble.put(serverNode.getServerName(), serverNode.getRegionInfoList());
+      }
+      // Use a fake table name to represent the whole cluster's assignments
+      result.put(HConstants.ENSEMBLE_TABLE_NAME, ensemble);
     }
     return result;
   }
@@ -738,7 +727,8 @@ public class RegionStates {
     serverMap.remove(serverName);
   }
 
-  ServerStateNode getServerNode(final ServerName serverName) {
+  @VisibleForTesting
+  public ServerStateNode getServerNode(final ServerName serverName) {
     return serverMap.get(serverName);
   }
 

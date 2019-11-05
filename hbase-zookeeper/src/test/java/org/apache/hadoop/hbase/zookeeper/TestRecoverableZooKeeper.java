@@ -43,17 +43,15 @@ import org.junit.experimental.categories.Category;
 
 @Category({ ZKTests.class, MediumTests.class })
 public class TestRecoverableZooKeeper {
-
   @ClassRule
   public static final HBaseClassTestRule CLASS_RULE =
       HBaseClassTestRule.forClass(TestRecoverableZooKeeper.class);
 
   private final static HBaseZKTestingUtility TEST_UTIL = new HBaseZKTestingUtility();
 
-  Abortable abortable = new Abortable() {
+  private Abortable abortable = new Abortable() {
     @Override
     public void abort(String why, Throwable e) {
-
     }
 
     @Override
@@ -81,29 +79,28 @@ public class TestRecoverableZooKeeper {
     String ensemble = ZKConfig.getZKQuorumServersString(conf);
     RecoverableZooKeeper rzk = ZKUtil.connect(conf, ensemble, zkw);
     rzk.create(znode, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-    rzk.setData(znode, "OPENING".getBytes(), 0);
+    rzk.setData(znode, Bytes.toBytes("OPENING"), 0);
     Field zkField = RecoverableZooKeeper.class.getDeclaredField("zk");
     zkField.setAccessible(true);
     int timeout = conf.getInt(HConstants.ZK_SESSION_TIMEOUT, HConstants.DEFAULT_ZK_SESSION_TIMEOUT);
     ZookeeperStub zkStub = new ZookeeperStub(ensemble, timeout, zkw);
     zkStub.setThrowExceptionInNumOperations(1);
     zkField.set(rzk, zkStub);
-    byte[] opened = "OPENED".getBytes();
+    byte[] opened = Bytes.toBytes("OPENED");
     rzk.setData(znode, opened, 1);
     byte[] data = rzk.getData(znode, false, new Stat());
     assertTrue(Bytes.equals(opened, data));
   }
 
-  class ZookeeperStub extends ZooKeeper {
-
+  static class ZookeeperStub extends ZooKeeper {
     private int throwExceptionInNumOperations;
 
-    public ZookeeperStub(String connectString, int sessionTimeout, Watcher watcher)
+    ZookeeperStub(String connectString, int sessionTimeout, Watcher watcher)
         throws IOException {
       super(connectString, sessionTimeout, watcher);
     }
 
-    public void setThrowExceptionInNumOperations(int throwExceptionInNumOperations) {
+    void setThrowExceptionInNumOperations(int throwExceptionInNumOperations) {
       this.throwExceptionInNumOperations = throwExceptionInNumOperations;
     }
 

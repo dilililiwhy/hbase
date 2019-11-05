@@ -18,23 +18,23 @@
 package org.apache.hadoop.hbase.master.assignment;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
+import org.apache.hadoop.hbase.MetaTableAccessor;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.RegionInfo;
 import org.apache.hadoop.hbase.client.RegionInfoBuilder;
-import org.apache.hadoop.hbase.exceptions.UnexpectedStateException;
 import org.apache.hadoop.hbase.master.RegionState.State;
 import org.apache.hadoop.hbase.procedure2.ProcedureTestingUtility;
 import org.apache.hadoop.hbase.procedure2.util.StringUtils;
 import org.apache.hadoop.hbase.testclassification.LargeTests;
 import org.apache.hadoop.hbase.testclassification.MasterTests;
 import org.junit.ClassRule;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.slf4j.Logger;
@@ -48,14 +48,6 @@ public class TestAssignmentManager extends TestAssignmentManagerBase {
     HBaseClassTestRule.forClass(TestAssignmentManager.class);
 
   private static final Logger LOG = LoggerFactory.getLogger(TestAssignmentManager.class);
-
-  @Test(expected = NullPointerException.class)
-  public void testWaitServerReportEventWithNullServer() throws UnexpectedStateException {
-    // Test what happens if we pass in null server. I'd expect it throws NPE.
-    if (this.am.waitServerReportEvent(null, null)) {
-      throw new UnexpectedStateException();
-    }
-  }
 
   @Test
   public void testAssignWithGoodExec() throws Exception {
@@ -91,27 +83,55 @@ public class TestAssignmentManager extends TestAssignmentManagerBase {
     }
   }
 
-  // Disabled for now. Since HBASE-18551, this mock is insufficient.
-  @Ignore
   @Test
-  public void testSocketTimeout() throws Exception {
+  public void testAssignSocketTimeout() throws Exception {
     TableName tableName = TableName.valueOf(this.name.getMethodName());
     RegionInfo hri = createRegionInfo(tableName, 1);
 
     // collect AM metrics before test
     collectAssignmentManagerMetrics();
 
-    rsDispatcher.setMockRsExecutor(new SocketTimeoutRsExecutor(20, 3));
+    rsDispatcher.setMockRsExecutor(new SocketTimeoutRsExecutor(20));
     waitOnFuture(submitProcedure(createAssignProcedure(hri)));
 
-    rsDispatcher.setMockRsExecutor(new SocketTimeoutRsExecutor(20, 1));
-    // exception.expect(ServerCrashException.class);
+    // we crashed a rs, so it is possible that there are other regions on the rs which will also be
+    // reassigned, so here we just assert greater than, not the exact number.
+    assertTrue(assignProcMetrics.getSubmittedCounter().getCount() > assignSubmittedCount);
+    assertEquals(assignFailedCount, assignProcMetrics.getFailedCounter().getCount());
+  }
+
+  @Test
+  public void testAssignQueueFullOnce() throws Exception {
+    TableName tableName = TableName.valueOf(this.name.getMethodName());
+    RegionInfo hri = createRegionInfo(tableName, 1);
+
+    // collect AM metrics before test
+    collectAssignmentManagerMetrics();
+
+    rsDispatcher.setMockRsExecutor(new CallQueueTooBigOnceRsExecutor());
+    waitOnFuture(submitProcedure(createAssignProcedure(hri)));
+
+    assertEquals(assignSubmittedCount + 1, assignProcMetrics.getSubmittedCounter().getCount());
+    assertEquals(assignFailedCount, assignProcMetrics.getFailedCounter().getCount());
+  }
+
+  @Test
+  public void testTimeoutThenQueueFull() throws Exception {
+    TableName tableName = TableName.valueOf(this.name.getMethodName());
+    RegionInfo hri = createRegionInfo(tableName, 1);
+
+    // collect AM metrics before test
+    collectAssignmentManagerMetrics();
+
+    rsDispatcher.setMockRsExecutor(new TimeoutThenCallQueueTooBigRsExecutor(10));
+    waitOnFuture(submitProcedure(createAssignProcedure(hri)));
+    rsDispatcher.setMockRsExecutor(new TimeoutThenCallQueueTooBigRsExecutor(15));
     waitOnFuture(submitProcedure(createUnassignProcedure(hri)));
 
     assertEquals(assignSubmittedCount + 1, assignProcMetrics.getSubmittedCounter().getCount());
     assertEquals(assignFailedCount, assignProcMetrics.getFailedCounter().getCount());
     assertEquals(unassignSubmittedCount + 1, unassignProcMetrics.getSubmittedCounter().getCount());
-    assertEquals(unassignFailedCount + 1, unassignProcMetrics.getFailedCounter().getCount());
+    assertEquals(unassignFailedCount, unassignProcMetrics.getFailedCounter().getCount());
   }
 
   private void testAssign(final MockRSExecutor executor) throws Exception {
@@ -222,5 +242,88 @@ public class TestAssignmentManager extends TestAssignmentManagerBase {
 
     // set it back as default, see setUpMeta()
     am.wakeMetaLoadedEvent();
+  }
+
+  private void assertCloseThenOpen() {
+    assertEquals(closeSubmittedCount + 1, closeProcMetrics.getSubmittedCounter().getCount());
+    assertEquals(closeFailedCount, closeProcMetrics.getFailedCounter().getCount());
+    assertEquals(openSubmittedCount + 1, openProcMetrics.getSubmittedCounter().getCount());
+    assertEquals(openFailedCount, openProcMetrics.getFailedCounter().getCount());
+  }
+
+  @Test
+  public void testMove() throws Exception {
+    TableName tableName = TableName.valueOf("testMove");
+    RegionInfo hri = createRegionInfo(tableName, 1);
+    rsDispatcher.setMockRsExecutor(new GoodRsExecutor());
+    am.assign(hri);
+
+    // collect AM metrics before test
+    collectAssignmentManagerMetrics();
+
+    am.move(hri);
+
+    assertEquals(moveSubmittedCount + 1, moveProcMetrics.getSubmittedCounter().getCount());
+    assertEquals(moveFailedCount, moveProcMetrics.getFailedCounter().getCount());
+    assertCloseThenOpen();
+  }
+
+  @Test
+  public void testReopen() throws Exception {
+    TableName tableName = TableName.valueOf("testReopen");
+    RegionInfo hri = createRegionInfo(tableName, 1);
+    rsDispatcher.setMockRsExecutor(new GoodRsExecutor());
+    am.assign(hri);
+
+    // collect AM metrics before test
+    collectAssignmentManagerMetrics();
+
+    TransitRegionStateProcedure proc =
+      TransitRegionStateProcedure.reopen(master.getMasterProcedureExecutor().getEnvironment(), hri);
+    am.getRegionStates().getRegionStateNode(hri).setProcedure(proc);
+    waitOnFuture(submitProcedure(proc));
+
+    assertEquals(reopenSubmittedCount + 1, reopenProcMetrics.getSubmittedCounter().getCount());
+    assertEquals(reopenFailedCount, reopenProcMetrics.getFailedCounter().getCount());
+    assertCloseThenOpen();
+  }
+
+  @Test
+  public void testLoadRegionFromMetaAfterRegionManuallyAdded() throws Exception {
+    try {
+      this.util.startMiniCluster();
+      final AssignmentManager am = this.util.getHBaseCluster().getMaster().getAssignmentManager();
+      final TableName tableName = TableName.
+        valueOf("testLoadRegionFromMetaAfterRegionManuallyAdded");
+      this.util.createTable(tableName, "f");
+      RegionInfo hri = createRegionInfo(tableName, 1);
+      assertNull("RegionInfo was just instantiated by the test, but "
+        + "shouldn't be in AM regionStates yet.", am.getRegionStates().getRegionState(hri));
+      MetaTableAccessor.addRegionToMeta(this.util.getConnection(), hri);
+      assertNull("RegionInfo was manually added in META, but "
+        + "shouldn't be in AM regionStates yet.", am.getRegionStates().getRegionState(hri));
+      hri = am.loadRegionFromMeta(hri.getEncodedName());
+      assertEquals(hri.getEncodedName(),
+        am.getRegionStates().getRegionState(hri).getRegion().getEncodedName());
+    }finally {
+      this.util.killMiniHBaseCluster();
+    }
+  }
+
+  @Test
+  public void testLoadRegionFromMetaRegionNotInMeta() throws Exception {
+    try {
+      this.util.startMiniCluster();
+      final AssignmentManager am = this.util.getHBaseCluster().getMaster().getAssignmentManager();
+      final TableName tableName = TableName.valueOf("testLoadRegionFromMetaRegionNotInMeta");
+      this.util.createTable(tableName, "f");
+      final RegionInfo hri = createRegionInfo(tableName, 1);
+      assertNull("RegionInfo was just instantiated by the test, but "
+        + "shouldn't be in AM regionStates yet.", am.getRegionStates().getRegionState(hri));
+      assertNull("RegionInfo was never added in META, should had returned null.",
+        am.loadRegionFromMeta(hri.getEncodedName()));
+    }finally {
+      this.util.killMiniHBaseCluster();
+    }
   }
 }

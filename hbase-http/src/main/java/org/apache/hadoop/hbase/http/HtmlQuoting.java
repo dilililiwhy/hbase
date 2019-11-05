@@ -20,6 +20,8 @@ package org.apache.hadoop.hbase.http;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.yetus.audience.InterfaceAudience;
 
 /**
@@ -27,11 +29,11 @@ import org.apache.yetus.audience.InterfaceAudience;
  */
 @InterfaceAudience.Private
 public final class HtmlQuoting {
-  private static final byte[] ampBytes = "&amp;".getBytes();
-  private static final byte[] aposBytes = "&apos;".getBytes();
-  private static final byte[] gtBytes = "&gt;".getBytes();
-  private static final byte[] ltBytes = "&lt;".getBytes();
-  private static final byte[] quotBytes = "&quot;".getBytes();
+  private static final byte[] ampBytes = Bytes.toBytes("&amp;");
+  private static final byte[] aposBytes = Bytes.toBytes("&apos;");
+  private static final byte[] gtBytes = Bytes.toBytes("&gt;");
+  private static final byte[] ltBytes = Bytes.toBytes("&lt;");
+  private static final byte[] quotBytes = Bytes.toBytes("&quot;");
 
   /**
    * Does the given string need to be quoted?
@@ -42,19 +44,19 @@ public final class HtmlQuoting {
    */
   public static boolean needsQuoting(byte[] data, int off, int len) {
     if (off+len > data.length) {
-        throw new IllegalStateException("off+len=" + off+len + " should be lower"
-                + " than data length=" + data.length);
+      throw new IllegalStateException("off+len=" + off+len + " should be lower"
+              + " than data length=" + data.length);
     }
     for(int i=off; i< off+len; ++i) {
       switch(data[i]) {
-      case '&':
-      case '<':
-      case '>':
-      case '\'':
-      case '"':
-        return true;
-      default:
-        break;
+        case '&':
+        case '<':
+        case '>':
+        case '\'':
+        case '"':
+          return true;
+        default:
+          break;
       }
     }
     return false;
@@ -69,7 +71,7 @@ public final class HtmlQuoting {
     if (str == null) {
       return false;
     }
-    byte[] bytes = str.getBytes();
+    byte[] bytes = Bytes.toBytes(str);
     return needsQuoting(bytes, 0 , bytes.length);
   }
 
@@ -81,16 +83,28 @@ public final class HtmlQuoting {
    * @param off the index of the first byte to quote
    * @param len the number of bytes to quote
    */
-  public static void quoteHtmlChars(OutputStream output, byte[] buffer,
-                                    int off, int len) throws IOException {
+  public static void quoteHtmlChars(OutputStream output, byte[] buffer, int off, int len)
+          throws IOException {
     for(int i=off; i < off+len; i++) {
       switch (buffer[i]) {
-      case '&': output.write(ampBytes); break;
-      case '<': output.write(ltBytes); break;
-      case '>': output.write(gtBytes); break;
-      case '\'': output.write(aposBytes); break;
-      case '"': output.write(quotBytes); break;
-      default: output.write(buffer, i, 1);
+        case '&':
+          output.write(ampBytes);
+          break;
+        case '<':
+          output.write(ltBytes);
+          break;
+        case '>':
+          output.write(gtBytes);
+          break;
+        case '\'':
+          output.write(aposBytes);
+          break;
+        case '"':
+          output.write(quotBytes);
+          break;
+        default:
+          output.write(buffer, i, 1);
+          break;
       }
     }
   }
@@ -104,7 +118,7 @@ public final class HtmlQuoting {
     if (item == null) {
       return null;
     }
-    byte[] bytes = item.getBytes();
+    byte[] bytes = Bytes.toBytes(item);
     if (needsQuoting(bytes, 0, bytes.length)) {
       ByteArrayOutputStream buffer = new ByteArrayOutputStream();
       try {
@@ -122,10 +136,8 @@ public final class HtmlQuoting {
    * Return an output stream that quotes all of the output.
    * @param out the stream to write the quoted output to
    * @return a new stream that the application show write to
-   * @throws IOException if the underlying output fails
    */
-  public static OutputStream quoteOutputStream(final OutputStream out
-                                               ) throws IOException {
+  public static OutputStream quoteOutputStream(final OutputStream out) {
     return new OutputStream() {
       private byte[] data = new byte[1];
       @Override
@@ -200,9 +212,9 @@ public final class HtmlQuoting {
     return buffer.toString();
   }
 
-  public static void main(String[] args) throws Exception {
+  public static void main(String[] args) {
     if (args.length == 0) {
-        throw new IllegalArgumentException("Please provide some arguments");
+      throw new IllegalArgumentException("Please provide some arguments");
     }
     for(String arg:args) {
       System.out.println("Original: " + arg);

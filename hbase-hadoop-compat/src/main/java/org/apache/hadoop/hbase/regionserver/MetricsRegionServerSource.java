@@ -231,9 +231,13 @@ public interface MetricsRegionServerSource extends BaseSource, JvmPauseMonitorSo
   String WALFILE_SIZE_DESC = "Size of all WAL Files";
   String STOREFILE_COUNT = "storeFileCount";
   String STOREFILE_COUNT_DESC = "Number of Store Files";
+  String STORE_REF_COUNT = "storeRefCount";
+  String STORE_REF_COUNT_DESC = "Store reference count";
+  String MAX_STORE_FILE_REF_COUNT = "maxStoreFileRefCount";
   String MEMSTORE_SIZE = "memStoreSize";
   String MEMSTORE_SIZE_DESC = "Size of the memstore";
   String STOREFILE_SIZE = "storeFileSize";
+  String STOREFILE_SIZE_GROWTH_RATE = "storeFileSizeGrowthRate";
   String MAX_STORE_FILE_AGE = "maxStoreFileAge";
   String MIN_STORE_FILE_AGE = "minStoreFileAge";
   String AVG_STORE_FILE_AGE = "avgStoreFileAge";
@@ -243,6 +247,8 @@ public interface MetricsRegionServerSource extends BaseSource, JvmPauseMonitorSo
   String AVG_STORE_FILE_AGE_DESC = "Average age of store files hosted on this RegionServer";
   String NUM_REFERENCE_FILES_DESC = "Number of reference file on this RegionServer";
   String STOREFILE_SIZE_DESC = "Size of storefiles being served.";
+  String STOREFILE_SIZE_GROWTH_RATE_DESC =
+        "Bytes per second by which the size of storefiles being served grows.";
   String TOTAL_REQUEST_COUNT = "totalRequestCount";
   String TOTAL_REQUEST_COUNT_DESC =
       "Total number of requests this RegionServer has answered; increments the count once for " +
@@ -553,4 +559,19 @@ public interface MetricsRegionServerSource extends BaseSource, JvmPauseMonitorSo
   String AVERAGE_REGION_SIZE = "averageRegionSize";
   String AVERAGE_REGION_SIZE_DESC =
       "Average region size over the RegionServer including memstore and storefile sizes.";
+
+  /** Metrics for {@link org.apache.hadoop.hbase.io.ByteBuffAllocator} **/
+  String BYTE_BUFF_ALLOCATOR_HEAP_ALLOCATION_BYTES = "ByteBuffAllocatorHeapAllocationBytes";
+  String BYTE_BUFF_ALLOCATOR_HEAP_ALLOCATION_BYTES_DESC =
+      "Bytes of heap allocation from ByteBuffAllocator";
+  String BYTE_BUFF_ALLOCATOR_POOL_ALLOCATION_BYTES = "ByteBuffAllocatorPoolAllocationBytes";
+  String BYTE_BUFF_ALLOCATOR_POOL_ALLOCATION_BYTES_DESC =
+      "Bytes of pool allocation from ByteBuffAllocator";
+  String BYTE_BUFF_ALLOCATOR_HEAP_ALLOCATION_RATIO = "ByteBuffAllocatorHeapAllocationRatio";
+  String BYTE_BUFF_ALLOCATOR_HEAP_ALLOCATION_RATIO_DESC =
+      "Ratio of heap allocation from ByteBuffAllocator, means heapAllocation/totalAllocation";
+  String BYTE_BUFF_ALLOCATOR_TOTAL_BUFFER_COUNT = "ByteBuffAllocatorTotalBufferCount";
+  String BYTE_BUFF_ALLOCATOR_TOTAL_BUFFER_COUNT_DESC = "Total buffer count in ByteBuffAllocator";
+  String BYTE_BUFF_ALLOCATOR_USED_BUFFER_COUNT = "ByteBuffAllocatorUsedBufferCount";
+  String BYTE_BUFF_ALLOCATOR_USED_BUFFER_COUNT_DESC = "Used buffer count in ByteBuffAllocator";
 }

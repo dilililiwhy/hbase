@@ -152,6 +152,7 @@ module Shell
       puts 'HBase Shell'
       puts 'Use "help" to get list of supported commands.'
       puts 'Use "exit" to quit this interactive shell.'
+      puts 'For Reference, please visit: http://hbase.apache.org/book.html#shell'
       print 'Version '
       command('version')
       puts
@@ -343,6 +344,7 @@ Shell.load_command_group(
     unassign
     zk_dump
     wal_roll
+    hbck_chore_run
     catalogjanitor_run
     catalogjanitor_switch
     catalogjanitor_enabled
@@ -352,6 +354,8 @@ Shell.load_command_group(
     compact_rs
     compaction_state
     trace
+    snapshot_cleanup_switch
+    snapshot_cleanup_enabled
     splitormerge_switch
     splitormerge_enabled
     clear_compaction_queues
@@ -360,6 +364,10 @@ Shell.load_command_group(
     clear_block_cache
     stop_master
     stop_regionserver
+    rit
+    list_decommissioned_regionservers
+    decommission_regionservers
+    recommission_regionserver
   ],
   # TODO: remove older hlog_roll command
   aliases: {
@@ -382,9 +390,13 @@ Shell.load_command_group(
     append_peer_namespaces
     remove_peer_namespaces
     set_peer_exclude_namespaces
+    append_peer_exclude_namespaces
+    remove_peer_exclude_namespaces
     show_peer_tableCFs
     set_peer_tableCFs
     set_peer_exclude_tableCFs
+    append_peer_exclude_tableCFs
+    remove_peer_exclude_tableCFs
     set_peer_bandwidth
     list_replicated_tables
     append_peer_tableCFs
@@ -431,6 +443,10 @@ Shell.load_command_group(
     list_quota_table_sizes
     list_quota_snapshots
     list_snapshot_sizes
+    enable_rpc_throttle
+    disable_rpc_throttle
+    enable_exceed_throttle_quota
+    disable_exceed_throttle_quota
   ]
 )
 
@@ -450,7 +466,6 @@ Shell.load_command_group(
   'procedures',
   full_name: 'PROCEDURES & LOCKS MANAGEMENT',
   commands: %w[
-    abort_procedure
     list_procedures
     list_locks
   ]

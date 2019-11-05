@@ -112,12 +112,6 @@ public class ColumnPaginationFilter extends FilterBase {
   }
 
   @Override
-  @Deprecated
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
-  }
-
-  @Override
   public ReturnCode filterCell(final Cell c)
   {
     if (columnOffset != null) {
@@ -234,15 +228,12 @@ public class ColumnPaginationFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof ColumnPaginationFilter))) {
-      return false;
-    }
-    ColumnPaginationFilter f = (ColumnPaginationFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(this.limit, this.offset);
+    return columnOffset == null ? Objects.hash(this.limit, this.offset) :
+      Objects.hash(this.limit, Bytes.hashCode(this.columnOffset));
   }
 }

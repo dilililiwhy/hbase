@@ -18,7 +18,6 @@
 package org.apache.hadoop.hbase.util;
 
 import java.io.IOException;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.hbase.ChoreService;
@@ -27,10 +26,9 @@ import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
-import org.apache.hadoop.hbase.client.ClusterConnection;
+import org.apache.hadoop.hbase.client.AsyncClusterConnection;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.log.HBaseMarkers;
-import org.apache.hadoop.hbase.zookeeper.MetaTableLocator;
 import org.apache.hadoop.hbase.zookeeper.ZKWatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,12 +103,7 @@ public class MockServer implements Server {
   }
 
   @Override
-  public ClusterConnection getConnection() {
-    return null;
-  }
-
-  @Override
-  public MetaTableLocator getMetaTableLocator() {
+  public Connection getConnection() {
     return null;
   }
 
@@ -121,18 +114,11 @@ public class MockServer implements Server {
 
   @Override
   public boolean isAborted() {
-    // TODO Auto-generated method stub
     return this.aborted;
   }
 
   @Override
   public ChoreService getChoreService() {
-    return null;
-  }
-
-  @Override
-  public ClusterConnection getClusterConnection() {
-    // TODO Auto-generated method stub
     return null;
   }
 
@@ -148,6 +134,11 @@ public class MockServer implements Server {
 
   @Override
   public Connection createConnection(Configuration conf) throws IOException {
+    return null;
+  }
+
+  @Override
+  public AsyncClusterConnection getAsyncClusterConnection() {
     return null;
   }
 }

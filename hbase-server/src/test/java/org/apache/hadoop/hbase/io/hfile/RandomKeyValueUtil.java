@@ -18,6 +18,7 @@
 package org.apache.hadoop.hbase.io.hfile;
 
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.util.Bytes;
 
 import java.util.Random;
 
@@ -49,7 +50,7 @@ public class RandomKeyValueUtil {
 
   public static KeyValue randomKeyValue(Random rand) {
     return new KeyValue(randomRowOrQualifier(rand),
-        COLUMN_FAMILY_NAME.getBytes(), randomRowOrQualifier(rand),
+        Bytes.toBytes(COLUMN_FAMILY_NAME), randomRowOrQualifier(rand),
         randomValue(rand));
   }
 
@@ -60,7 +61,7 @@ public class RandomKeyValueUtil {
         - MIN_ROW_OR_QUALIFIER_LENGTH + 1);
     for (int i = 0; i < fieldLen; ++i)
       field.append(randomReadableChar(rand));
-    return field.toString().getBytes();
+    return Bytes.toBytes(field.toString());
   }
 
   public static byte[] randomValue(Random rand) {
@@ -69,7 +70,7 @@ public class RandomKeyValueUtil {
       v.append((char) (32 + rand.nextInt(95)));
     }
 
-    byte[] valueBytes = v.toString().getBytes();
+    byte[] valueBytes = Bytes.toBytes(v.toString());
     return valueBytes;
   }
 
@@ -78,10 +79,9 @@ public class RandomKeyValueUtil {
    * increases. The result consists of a prefix, which is a deterministic
    * increasing function of i, and a random suffix.
    *
-   * @param rand
-   *          random number generator to use
+   * @param rand random number generator to use
    * @param i
-   * @return
+   * @return the random key
    */
   public static byte[] randomOrderedKey(Random rand, int i) {
     StringBuilder k = new StringBuilder();
@@ -98,7 +98,7 @@ public class RandomKeyValueUtil {
     for (int j = 0; j < rand.nextInt(50); ++j)
       k.append(randomReadableChar(rand));
 
-    byte[] keyBytes = k.toString().getBytes();
+    byte[] keyBytes = Bytes.toBytes(k.toString());
     return keyBytes;
   }
 
@@ -117,7 +117,7 @@ public class RandomKeyValueUtil {
     for (int j = 0; j < suffixLength; ++j)
       k.append(randomReadableChar(rand));
 
-    byte[] keyBytes = k.toString().getBytes();
+    byte[] keyBytes = Bytes.toBytes(k.toString());
     return keyBytes;
   }
 
@@ -127,7 +127,7 @@ public class RandomKeyValueUtil {
       v.append((char) (32 + rand.nextInt(95)));
     }
 
-    byte[] valueBytes = v.toString().getBytes();
+    byte[] valueBytes = Bytes.toBytes(v.toString());
     return valueBytes;
   }
 }

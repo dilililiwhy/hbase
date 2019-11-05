@@ -18,7 +18,6 @@
 package org.apache.hadoop.hbase.client;
 
 import java.io.File;
-
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
@@ -28,8 +27,9 @@ import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.StartMiniClusterOption;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.master.HMaster;
-import org.apache.hadoop.hbase.master.NoSuchProcedureException;
+import org.apache.hadoop.hbase.master.assignment.AssignmentTestingUtil;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.testclassification.ClientTests;
 import org.apache.hadoop.hbase.testclassification.MediumTests;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.JVMClusterUtil.RegionServerThread;
@@ -42,11 +42,10 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.rules.TestName;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@Category(MediumTests.class)
+@Category({ ClientTests.class, MediumTests.class })
 public class TestSeparateClientZKCluster {
   private static final Logger LOG = LoggerFactory.getLogger(TestSeparateClientZKCluster.class);
   private static final HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
@@ -95,18 +94,16 @@ public class TestSeparateClientZKCluster {
     FileUtils.deleteDirectory(clientZkDir);
   }
 
-  @Test(timeout = 60000)
+  @Test
   public void testBasicOperation() throws Exception {
     TableName tn = TableName.valueOf(name.getMethodName());
     // create table
     Connection conn = TEST_UTIL.getConnection();
-    Admin admin = conn.getAdmin();
-    HTable table = (HTable) conn.getTable(tn);
-    try {
+    try (Admin admin = conn.getAdmin(); Table table = conn.getTable(tn)) {
       ColumnFamilyDescriptorBuilder cfDescBuilder =
-          ColumnFamilyDescriptorBuilder.newBuilder(family);
+        ColumnFamilyDescriptorBuilder.newBuilder(family);
       TableDescriptorBuilder tableDescBuilder =
-          TableDescriptorBuilder.newBuilder(tn).setColumnFamily(cfDescBuilder.build());
+        TableDescriptorBuilder.newBuilder(tn).setColumnFamily(cfDescBuilder.build());
       admin.createTable(tableDescBuilder.build());
       // test simple get and put
       Put put = new Put(row);
@@ -116,19 +113,15 @@ public class TestSeparateClientZKCluster {
       Result result = table.get(get);
       LOG.debug("Result: " + Bytes.toString(result.getValue(family, qualifier)));
       Assert.assertArrayEquals(value, result.getValue(family, qualifier));
-    } finally {
-      admin.close();
-      table.close();
     }
   }
 
-  @Test(timeout = 60000)
+  @Test
   public void testMasterSwitch() throws Exception {
     // get an admin instance and issue some request first
     Connection conn = TEST_UTIL.getConnection();
-    Admin admin = conn.getAdmin();
-    LOG.debug("Tables: " + admin.listTableDescriptors());
-    try {
+    try (Admin admin = conn.getAdmin()) {
+      LOG.debug("Tables: " + admin.listTableDescriptors());
       MiniHBaseCluster cluster = TEST_UTIL.getHBaseCluster();
       // switch active master
       HMaster master = cluster.getMaster();
@@ -141,24 +134,22 @@ public class TestSeparateClientZKCluster {
       }
       // confirm client access still works
       Assert.assertTrue(admin.balance(false));
-    } finally {
-      admin.close();
     }
   }
 
-  @Test(timeout = 60000)
+  @Test
   public void testMetaRegionMove() throws Exception {
     TableName tn = TableName.valueOf(name.getMethodName());
     // create table
     Connection conn = TEST_UTIL.getConnection();
-    Admin admin = conn.getAdmin();
-    HTable table = (HTable) conn.getTable(tn);
-    try {
+    try (Admin admin = conn.getAdmin();
+        Table table = conn.getTable(tn);
+        RegionLocator locator = conn.getRegionLocator(tn)) {
       MiniHBaseCluster cluster = TEST_UTIL.getHBaseCluster();
       ColumnFamilyDescriptorBuilder cfDescBuilder =
-          ColumnFamilyDescriptorBuilder.newBuilder(family);
+        ColumnFamilyDescriptorBuilder.newBuilder(family);
       TableDescriptorBuilder tableDescBuilder =
-          TableDescriptorBuilder.newBuilder(tn).setColumnFamily(cfDescBuilder.build());
+        TableDescriptorBuilder.newBuilder(tn).setColumnFamily(cfDescBuilder.build());
       admin.createTable(tableDescBuilder.build());
       // issue some requests to cache the region location
       Put put = new Put(row);
@@ -167,24 +158,23 @@ public class TestSeparateClientZKCluster {
       Get get = new Get(row);
       Result result = table.get(get);
       // move meta region and confirm client could detect
-      byte[] destServerName = null;
+      ServerName destServerName = null;
       for (RegionServerThread rst : cluster.getLiveRegionServerThreads()) {
         ServerName name = rst.getRegionServer().getServerName();
         if (!name.equals(cluster.getServerHoldingMeta())) {
-          destServerName = Bytes.toBytes(name.getServerName());
+          destServerName = name;
           break;
         }
       }
       admin.move(RegionInfoBuilder.FIRST_META_REGIONINFO.getEncodedNameAsBytes(), destServerName);
       LOG.debug("Finished moving meta");
       // invalidate client cache
-      RegionInfo region =
-          table.getRegionLocator().getRegionLocation(row).getRegion();
+      RegionInfo region = locator.getRegionLocation(row).getRegion();
       ServerName currentServer = cluster.getServerHoldingRegion(tn, region.getRegionName());
       for (RegionServerThread rst : cluster.getLiveRegionServerThreads()) {
         ServerName name = rst.getRegionServer().getServerName();
         if (!name.equals(currentServer)) {
-          destServerName = Bytes.toBytes(name.getServerName());
+          destServerName = name;
           break;
         }
       }
@@ -196,31 +186,26 @@ public class TestSeparateClientZKCluster {
       result = table.get(get);
       LOG.debug("Result: " + Bytes.toString(result.getValue(family, qualifier)));
       Assert.assertArrayEquals(newVal, result.getValue(family, qualifier));
-    } finally {
-      admin.close();
-      table.close();
     }
   }
 
-  @Test(timeout = 120000)
+  @Test
   public void testMetaMoveDuringClientZkClusterRestart() throws Exception {
     TableName tn = TableName.valueOf(name.getMethodName());
     // create table
-    ClusterConnection conn = (ClusterConnection) TEST_UTIL.getConnection();
-    Admin admin = conn.getAdmin();
-    HTable table = (HTable) conn.getTable(tn);
-    try {
+    Connection conn = TEST_UTIL.getConnection();
+    try (Admin admin = conn.getAdmin(); Table table = conn.getTable(tn)) {
       ColumnFamilyDescriptorBuilder cfDescBuilder =
-          ColumnFamilyDescriptorBuilder.newBuilder(family);
+        ColumnFamilyDescriptorBuilder.newBuilder(family);
       TableDescriptorBuilder tableDescBuilder =
-          TableDescriptorBuilder.newBuilder(tn).setColumnFamily(cfDescBuilder.build());
+        TableDescriptorBuilder.newBuilder(tn).setColumnFamily(cfDescBuilder.build());
       admin.createTable(tableDescBuilder.build());
       // put some data
       Put put = new Put(row);
       put.addColumn(family, qualifier, value);
       table.put(put);
       // invalid connection cache
-      conn.clearRegionCache();
+      conn.clearRegionLocationCache();
       // stop client zk cluster
       clientZkCluster.shutdown();
       // stop current meta server and confirm the server shutdown process
@@ -233,12 +218,8 @@ public class TestSeparateClientZKCluster {
         Thread.sleep(200);
       }
       // wait for meta region online
-      try {
-        cluster.getMaster().getAssignmentManager()
-          .waitForAssignment(RegionInfoBuilder.FIRST_META_REGIONINFO);
-      } catch (NoSuchProcedureException e) {
-        // we don't need to take any further action
-      }
+      AssignmentTestingUtil.waitForAssignment(cluster.getMaster().getAssignmentManager(),
+        RegionInfoBuilder.FIRST_META_REGIONINFO);
       // wait some long time to make sure we will retry sync data to client ZK until data set
       Thread.sleep(10000);
       clientZkCluster.startup(clientZkDir);
@@ -247,13 +228,10 @@ public class TestSeparateClientZKCluster {
       Result result = table.get(get);
       LOG.debug("Result: " + Bytes.toString(result.getValue(family, qualifier)));
       Assert.assertArrayEquals(value, result.getValue(family, qualifier));
-    } finally {
-      admin.close();
-      table.close();
     }
   }
 
-  @Test(timeout = 60000)
+  @Test
   public void testAsyncTable() throws Exception {
     TableName tn = TableName.valueOf(name.getMethodName());
     ColumnFamilyDescriptorBuilder cfDescBuilder = ColumnFamilyDescriptorBuilder.newBuilder(family);

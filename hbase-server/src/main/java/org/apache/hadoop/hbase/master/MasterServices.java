@@ -51,6 +51,8 @@ import org.apache.hadoop.hbase.replication.ReplicationException;
 import org.apache.hadoop.hbase.replication.ReplicationPeerConfig;
 import org.apache.hadoop.hbase.replication.ReplicationPeerDescription;
 import org.apache.hadoop.hbase.replication.SyncReplicationState;
+import org.apache.hadoop.hbase.security.access.AccessChecker;
+import org.apache.hadoop.hbase.security.access.ZKPermissionWatcher;
 import org.apache.yetus.audience.InterfaceAudience;
 
 import org.apache.hbase.thirdparty.com.google.common.annotations.VisibleForTesting;
@@ -351,7 +353,7 @@ public interface MasterServices extends Server {
    * @return true if master is in maintanceMode
    * @throws IOException if the inquiry failed due to an IO problem
    */
-  boolean isInMaintenanceMode() throws IOException;
+  boolean isInMaintenanceMode();
 
   /**
    * Abort a procedure.
@@ -510,4 +512,29 @@ public interface MasterServices extends Server {
    * @return True if cluster is up; false if cluster is not up (we are shutting down).
    */
   boolean isClusterUp();
+
+  /**
+   * @return return null if current is zk-based WAL splitting
+   */
+  default SplitWALManager getSplitWALManager(){
+    return null;
+  }
+
+  /**
+   * @return the {@link AccessChecker}
+   */
+  AccessChecker getAccessChecker();
+
+  /**
+   * @return the {@link ZKPermissionWatcher}
+   */
+  ZKPermissionWatcher getZKPermissionWatcher();
+
+  /**
+   * Execute region plans with throttling
+   * @param plans to execute
+   * @return succeeded plans
+   */
+  List<RegionPlan> executeRegionPlansWithThrottling(List<RegionPlan> plans);
+
 }

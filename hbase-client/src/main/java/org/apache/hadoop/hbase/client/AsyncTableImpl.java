@@ -30,6 +30,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.CompareOperator;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.io.TimeRange;
+import org.apache.hadoop.hbase.util.FutureUtils;
 import org.apache.yetus.audience.InterfaceAudience;
 
 /**
@@ -62,6 +63,16 @@ class AsyncTableImpl implements AsyncTable<ScanResultConsumer> {
   }
 
   @Override
+  public CompletableFuture<TableDescriptor> getDescriptor() {
+    return wrap(rawTable.getDescriptor());
+  }
+
+  @Override
+  public AsyncTableRegionLocator getRegionLocator() {
+    return rawTable.getRegionLocator();
+  }
+
+  @Override
   public long getRpcTimeout(TimeUnit unit) {
     return rawTable.getRpcTimeout(unit);
   }
@@ -87,15 +98,7 @@ class AsyncTableImpl implements AsyncTable<ScanResultConsumer> {
   }
 
   private <T> CompletableFuture<T> wrap(CompletableFuture<T> future) {
-    CompletableFuture<T> asyncFuture = new CompletableFuture<>();
-    future.whenCompleteAsync((r, e) -> {
-      if (e != null) {
-        asyncFuture.completeExceptionally(e);
-      } else {
-        asyncFuture.complete(r);
-      }
-    }, pool);
-    return asyncFuture;
+    return FutureUtils.wrapFuture(future, pool);
   }
 
   @Override

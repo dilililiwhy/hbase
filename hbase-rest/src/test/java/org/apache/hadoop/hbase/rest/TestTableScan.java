@@ -48,6 +48,7 @@ import javax.xml.bind.annotation.XmlRootElement;
 import javax.xml.parsers.SAXParserFactory;
 import javax.xml.stream.XMLStreamException;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HColumnDescriptor;
@@ -90,9 +91,11 @@ public class TestTableScan {
   private static final String CFB = "b";
   private static final String COLUMN_1 = CFA + ":1";
   private static final String COLUMN_2 = CFB + ":2";
+  private static final String COLUMN_EMPTY = CFA + ":";
   private static Client client;
   private static int expectedRows1;
   private static int expectedRows2;
+  private static int expectedRows3;
   private static Configuration conf;
 
   private static final HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
@@ -109,12 +112,13 @@ public class TestTableScan {
       REST_TEST_UTIL.getServletPort()));
     Admin admin = TEST_UTIL.getAdmin();
     if (!admin.tableExists(TABLE)) {
-    HTableDescriptor htd = new HTableDescriptor(TABLE);
-    htd.addFamily(new HColumnDescriptor(CFA));
-    htd.addFamily(new HColumnDescriptor(CFB));
-    admin.createTable(htd);
-    expectedRows1 = TestScannerResource.insertData(conf, TABLE, COLUMN_1, 1.0);
-    expectedRows2 = TestScannerResource.insertData(conf, TABLE, COLUMN_2, 0.5);
+      HTableDescriptor htd = new HTableDescriptor(TABLE);
+      htd.addFamily(new HColumnDescriptor(CFA));
+      htd.addFamily(new HColumnDescriptor(CFB));
+      admin.createTable(htd);
+      expectedRows1 = TestScannerResource.insertData(conf, TABLE, COLUMN_1, 1.0);
+      expectedRows2 = TestScannerResource.insertData(conf, TABLE, COLUMN_2, 0.5);
+      expectedRows3 = TestScannerResource.insertData(conf, TABLE, COLUMN_EMPTY, 1.0);
     }
   }
 
@@ -591,11 +595,51 @@ public class TestTableScan {
       RowModel rowModel = rowModels.get(i);
       RowModel reversedRowModel = reversedRowModels.get(i);
 
-      assertEquals(new String(rowModel.getKey(), "UTF-8"),
-          new String(reversedRowModel.getKey(), "UTF-8"));
-      assertEquals(new String(rowModel.getCells().get(0).getValue(), "UTF-8"),
-          new String(reversedRowModel.getCells().get(0).getValue(), "UTF-8"));
+      assertEquals(new String(rowModel.getKey(), StandardCharsets.UTF_8),
+          new String(reversedRowModel.getKey(), StandardCharsets.UTF_8));
+      assertEquals(new String(rowModel.getCells().get(0).getValue(), StandardCharsets.UTF_8),
+          new String(reversedRowModel.getCells().get(0).getValue(), StandardCharsets.UTF_8));
     }
+  }
+
+  @Test
+  public void testColumnWithEmptyQualifier() throws IOException, JAXBException {
+    // Test scanning with empty qualifier
+    StringBuilder builder = new StringBuilder();
+    builder.append("/*");
+    builder.append("?");
+    builder.append(Constants.SCAN_COLUMN + "=" + COLUMN_EMPTY);
+    Response response = client.get("/" + TABLE + builder.toString(),
+        Constants.MIMETYPE_JSON);
+    assertEquals(200, response.getCode());
+    assertEquals(Constants.MIMETYPE_JSON, response.getHeader("content-type"));
+    ObjectMapper mapper = new JacksonJaxbJsonProvider()
+        .locateMapper(CellSetModel.class, MediaType.APPLICATION_JSON_TYPE);
+    CellSetModel model = mapper.readValue(response.getStream(), CellSetModel.class);
+    int count = TestScannerResource.countCellSet(model);
+    assertEquals(expectedRows3, count);
+    checkRowsNotNull(model);
+    RowModel startRow = model.getRows().get(0);
+    assertEquals("aaa", Bytes.toString(startRow.getKey()));
+    assertEquals(1, startRow.getCells().size());
+
+    // Test scanning with empty qualifier and normal qualifier
+    builder = new StringBuilder();
+    builder.append("/*");
+    builder.append("?");
+    builder.append(Constants.SCAN_COLUMN + "=" + COLUMN_1);
+    builder.append("&");
+    builder.append(Constants.SCAN_COLUMN + "=" + COLUMN_EMPTY);
+    response = client.get("/" + TABLE + builder.toString(),
+        Constants.MIMETYPE_JSON);
+    assertEquals(200, response.getCode());
+    assertEquals(Constants.MIMETYPE_JSON, response.getHeader("content-type"));
+    mapper = new JacksonJaxbJsonProvider()
+        .locateMapper(CellSetModel.class, MediaType.APPLICATION_JSON_TYPE);
+    model = mapper.readValue(response.getStream(), CellSetModel.class);
+    count = TestScannerResource.countCellSet(model);
+    assertEquals(expectedRows1 + expectedRows3, count);
+    checkRowsNotNull(model);
   }
 
   public static class CustomFilter extends PrefixFilter {
@@ -606,8 +650,9 @@ public class TestTableScan {
     }
 
     @Override
-    public boolean filterRowKey(byte[] buffer, int offset, int length) {
-      int cmp = Bytes.compareTo(buffer, offset, length, this.key, 0, this.key.length);
+    public boolean filterRowKey(Cell cell) {
+      int cmp = Bytes.compareTo(cell.getRowArray(), cell.getRowOffset(), cell.getRowLength(),
+              this.key, 0, this.key.length);
       return cmp != 0;
     }
 

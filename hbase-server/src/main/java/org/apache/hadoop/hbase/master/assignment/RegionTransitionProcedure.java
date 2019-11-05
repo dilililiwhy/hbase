@@ -18,6 +18,7 @@
 package org.apache.hadoop.hbase.master.assignment;
 
 import java.io.IOException;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableName;
@@ -124,7 +125,8 @@ public abstract class RegionTransitionProcedure extends Procedure<MasterProcedur
       TransitionCode code, long seqId) throws UnexpectedStateException;
 
   @Override
-  public abstract RemoteOperation remoteCallBuild(MasterProcedureEnv env, ServerName serverName);
+  public abstract Optional<RemoteOperation> remoteCallBuild(MasterProcedureEnv env,
+      ServerName serverName);
 
   protected abstract boolean remoteCallFailed(MasterProcedureEnv env, RegionStateNode regionNode,
       IOException exception);
@@ -174,4 +176,5 @@ public abstract class RegionTransitionProcedure extends Procedure<MasterProcedur
     // should not be called for region operation until we modified the open/close region procedure
     throw new UnsupportedOperationException();
   }
+
 }

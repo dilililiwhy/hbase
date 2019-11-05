@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +44,7 @@ import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.CompatibilitySingletonFactory;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
@@ -70,6 +70,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.hbase.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.hbase.thirdparty.com.google.common.collect.Sets;
 import org.apache.hbase.thirdparty.com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 /**
@@ -147,7 +148,7 @@ public class ReplicationSourceManager implements ReplicationListener {
   private final Configuration conf;
   private final FileSystem fs;
   // The paths to the latest log of each wal group, for new coming peers
-  private final Set<Path> latestPaths;
+  private final Map<String, Path> latestPaths;
   // Path to the wals directories
   private final Path logDir;
   // Path to the wal archive
@@ -209,13 +210,13 @@ public class ReplicationSourceManager implements ReplicationListener {
     int nbWorkers = conf.getInt("replication.executor.workers", 1);
     // use a short 100ms sleep since this could be done inline with a RS startup
     // even if we fail, other region servers can take care of it
-    this.executor = new ThreadPoolExecutor(nbWorkers, nbWorkers, 100, TimeUnit.MILLISECONDS,
-        new LinkedBlockingQueue<>());
+    this.executor = new ThreadPoolExecutor(nbWorkers, nbWorkers, 100,
+        TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
     ThreadFactoryBuilder tfb = new ThreadFactoryBuilder();
     tfb.setNameFormat("ReplicationExecutor-%d");
     tfb.setDaemon(true);
     this.executor.setThreadFactory(tfb.build());
-    this.latestPaths = new HashSet<Path>();
+    this.latestPaths = new HashMap<>();
     this.replicationForBulkLoadDataEnabled = conf.getBoolean(
       HConstants.REPLICATION_BULKLOAD_ENABLE_KEY, HConstants.REPLICATION_BULKLOAD_ENABLE_DEFAULT);
     this.sleepForRetries = this.conf.getLong("replication.source.sync.sleepforretries", 1000);
@@ -370,17 +371,17 @@ public class ReplicationSourceManager implements ReplicationListener {
       Map<String, NavigableSet<String>> walsByGroup = new HashMap<>();
       this.walsById.put(peerId, walsByGroup);
       // Add the latest wal to that source's queue
-      if (this.latestPaths.size() > 0) {
-        for (Path logPath : latestPaths) {
-          String name = logPath.getName();
-          String walPrefix = AbstractFSWALProvider.getWALPrefixFromWALName(name);
-          NavigableSet<String> logs = new TreeSet<>();
-          logs.add(name);
-          walsByGroup.put(walPrefix, logs);
+      if (!latestPaths.isEmpty()) {
+        for (Map.Entry<String, Path> walPrefixAndPath : latestPaths.entrySet()) {
+          Path walPath = walPrefixAndPath.getValue();
+          NavigableSet<String> wals = new TreeSet<>();
+          wals.add(walPath.getName());
+          walsByGroup.put(walPrefixAndPath.getKey(), wals);
           // Abort RS and throw exception to make add peer failed
           abortAndThrowIOExceptionWhenFail(
-            () -> this.queueStorage.addWAL(server.getServerName(), peerId, name));
-          src.enqueueLog(logPath);
+            () -> this.queueStorage.addWAL(server.getServerName(), peerId, walPath.getName()));
+          src.enqueueLog(walPath);
+          LOG.trace("Enqueued {} to source {} during source creation.", walPath, src.getQueueId());
         }
       }
     }
@@ -481,7 +482,8 @@ public class ReplicationSourceManager implements ReplicationListener {
       ReplicationSourceInterface toRemove = this.sources.put(peerId, src);
       if (toRemove != null) {
         LOG.info("Terminate replication source for " + toRemove.getPeerId());
-        toRemove.terminate(terminateMessage);
+        // Do not clear metrics
+        toRemove.terminate(terminateMessage, null, false);
       }
       for (NavigableSet<String> walsByGroup : walsById.get(peerId).values()) {
         walsByGroup.forEach(wal -> src.enqueueLog(new Path(this.logDir, wal)));
@@ -779,15 +781,7 @@ public class ReplicationSourceManager implements ReplicationListener {
       }
 
       // Add to latestPaths
-      Iterator<Path> iterator = latestPaths.iterator();
-      while (iterator.hasNext()) {
-        Path path = iterator.next();
-        if (path.getName().contains(logPrefix)) {
-          iterator.remove();
-          break;
-        }
-      }
-      this.latestPaths.add(newLog);
+      latestPaths.put(logPrefix, newLog);
     }
   }
 
@@ -797,6 +791,8 @@ public class ReplicationSourceManager implements ReplicationListener {
     // This only updates the sources we own, not the recovered ones
     for (ReplicationSourceInterface source : this.sources.values()) {
       source.enqueueLog(newLog);
+      LOG.trace("Enqueued {} to source {} while performing postLogRoll operation.",
+          newLog, source.getQueueId());
     }
   }
 
@@ -820,6 +816,8 @@ public class ReplicationSourceManager implements ReplicationListener {
     try {
       this.executor.execute(transfer);
     } catch (RejectedExecutionException ex) {
+      CompatibilitySingletonFactory.getInstance(MetricsReplicationSourceFactory.class)
+          .getGlobalSource().incrFailedRecoveryQueue();
       LOG.info("Cancelling the transfer of " + deadRS + " because of " + ex.getMessage());
     }
   }
@@ -891,7 +889,12 @@ public class ReplicationSourceManager implements ReplicationListener {
           queueStorage.removeReplicatorIfQueueIsEmpty(deadRS);
         }
       } catch (ReplicationException e) {
-        server.abort("Failed to claim queue from dead regionserver", e);
+        LOG.error(String.format("ReplicationException: cannot claim dead region (%s)'s " +
+            "replication queue. Znode : (%s)" +
+            " Possible solution: check if znode size exceeds jute.maxBuffer value. " +
+            " If so, increase it for both client and server side." + e),  deadRS,
+            queueStorage.getRsNode(deadRS));
+        server.abort("Failed to claim queue from dead regionserver.", e);
         return;
       }
       // Copying over the failed queue is completed.
@@ -961,7 +964,9 @@ public class ReplicationSourceManager implements ReplicationListener {
               wals.add(wal);
             }
             oldsources.add(src);
+            LOG.trace("Added source for recovered queue: " + src.getQueueId());
             for (String wal : walsSet) {
+              LOG.trace("Enqueueing log from recovered queue for source: " + src.getQueueId());
               src.enqueueLog(new Path(oldLogDir, wal));
             }
             src.startup();
@@ -1042,6 +1047,13 @@ public class ReplicationSourceManager implements ReplicationListener {
   int getSizeOfLatestPath() {
     synchronized (latestPaths) {
       return latestPaths.size();
+    }
+  }
+
+  @VisibleForTesting
+  Set<Path> getLastestPath() {
+    synchronized (latestPaths) {
+      return Sets.newHashSet(latestPaths.values());
     }
   }
 

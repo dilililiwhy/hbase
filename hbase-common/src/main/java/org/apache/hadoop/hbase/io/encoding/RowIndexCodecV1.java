@@ -53,6 +53,13 @@ public class RowIndexCodecV1 extends AbstractDataBlockEncoder {
 
   private static class RowIndexEncodingState extends EncodingState {
     RowIndexEncoderV1 encoder = null;
+
+    @Override
+    public void beforeShipped() {
+      if (encoder != null) {
+        encoder.beforeShipped();
+      }
+    }
   }
 
   @Override
@@ -118,16 +125,17 @@ public class RowIndexCodecV1 extends AbstractDataBlockEncoder {
       }
       boolean includesMvcc = decodingCtx.getHFileContext().isIncludesMvcc();
       ByteArrayOutputStream baos = new ByteArrayOutputStream();
-      DataOutputStream out = new DataOutputStream(baos);
-      for (Cell cell : kvs) {
-        KeyValue currentCell = KeyValueUtil.copyToNewKeyValue(cell);
-        out.write(currentCell.getBuffer(), currentCell.getOffset(),
-            currentCell.getLength());
-        if (includesMvcc) {
-          WritableUtils.writeVLong(out, cell.getSequenceId());
+      try (DataOutputStream out = new DataOutputStream(baos)) {
+        for (Cell cell : kvs) {
+          KeyValue currentCell = KeyValueUtil.copyToNewKeyValue(cell);
+          out.write(currentCell.getBuffer(), currentCell.getOffset(),
+                  currentCell.getLength());
+          if (includesMvcc) {
+            WritableUtils.writeVLong(out, cell.getSequenceId());
+          }
         }
+        out.flush();
       }
-      out.flush();
       return ByteBuffer.wrap(baos.getBuffer(), 0, baos.size());
     }
   }

@@ -16,12 +16,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.filter;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Objects;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CompareOperator;
@@ -47,20 +45,6 @@ import org.apache.hbase.thirdparty.com.google.protobuf.InvalidProtocolBufferExce
  */
 @InterfaceAudience.Public
 public class QualifierFilter extends CompareFilter {
-
-  /**
-   * Constructor.
-   * @param op the compare op for column qualifier matching
-   * @param qualifierComparator the comparator for column qualifier matching
-   * @deprecated Since 2.0.0. Will be removed in 3.0.0.
-   * Use {@link #QualifierFilter(CompareOperator, ByteArrayComparable)} instead.
-   */
-  @Deprecated
-  public QualifierFilter(final CompareOp op,
-      final ByteArrayComparable qualifierComparator) {
-    super(op, qualifierComparator);
-  }
-
   /**
    * Constructor.
    * @param op the compare op for column qualifier matching
@@ -71,19 +55,10 @@ public class QualifierFilter extends CompareFilter {
     super(op, qualifierComparator);
   }
 
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
-  }
-
   @Override
   public ReturnCode filterCell(final Cell c) {
-    int qualifierLength = c.getQualifierLength();
-    if (qualifierLength > 0) {
-      if (compareQualifier(getCompareOperator(), this.comparator, c)) {
-        return ReturnCode.SKIP;
-      }
+    if (compareQualifier(getCompareOperator(), this.comparator, c)) {
+      return ReturnCode.SKIP;
     }
     return ReturnCode.INCLUDE;
   }
@@ -147,15 +122,11 @@ public class QualifierFilter extends CompareFilter {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof QualifierFilter))) {
-      return false;
-    }
-    QualifierFilter f = (QualifierFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(this.getComparator(), this.getCompareOperator());
+    return super.hashCode();
   }
 }

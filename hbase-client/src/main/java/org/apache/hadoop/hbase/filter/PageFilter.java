@@ -67,12 +67,6 @@ public class PageFilter extends FilterBase {
     return false;
   }
 
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) throws IOException {
-    return filterCell(c);
-  }
-
   @Override
   public ReturnCode filterCell(final Cell ignored) throws IOException {
     return ReturnCode.INCLUDE;
@@ -154,11 +148,7 @@ public class PageFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof PageFilter))) {
-      return false;
-    }
-    PageFilter f = (PageFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override

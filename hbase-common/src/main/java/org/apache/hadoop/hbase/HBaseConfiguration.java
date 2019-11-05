@@ -39,7 +39,9 @@ public class HBaseConfiguration extends Configuration {
   /**
    * Instantiating HBaseConfiguration() is deprecated. Please use
    * HBaseConfiguration#create() to construct a plain Configuration
-   * @deprecated Please use create() instead.
+   * @deprecated since 0.90.0. Please use {@link #create()} instead.
+   * @see #create()
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-2036">HBASE-2036</a>
    */
   @Deprecated
   public HBaseConfiguration() {
@@ -53,7 +55,9 @@ public class HBaseConfiguration extends Configuration {
   /**
    * Instantiating HBaseConfiguration() is deprecated. Please use
    * HBaseConfiguration#create(conf) to construct a plain Configuration
-   * @deprecated Please user create(conf) instead.
+   * @deprecated since 0.90.0. Please use {@link #create(Configuration)} instead.
+   * @see #create(Configuration)
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-2036">HBASE-2036</a>
    */
   @Deprecated
   public HBaseConfiguration(final Configuration c) {
@@ -167,35 +171,6 @@ public class HBaseConfiguration extends Configuration {
       // ignore
     }
     return isShowConf;
-  }
-
-  /**
-   * Get the value of the <code>name</code> property as an <code>int</code>, possibly
-   * referring to the deprecated name of the configuration property.
-   * If no such property exists, the provided default value is returned,
-   * or if the specified value is not a valid <code>int</code>,
-   * then an error is thrown.
-   *
-   * @param name property name.
-   * @param deprecatedName a deprecatedName for the property to use
-   * if non-deprecated name is not used
-   * @param defaultValue default value.
-   * @throws NumberFormatException when the value is invalid
-   * @return property value as an <code>int</code>,
-   *         or <code>defaultValue</code>.
-   */
-  // TODO: developer note: This duplicates the functionality of deprecated
-  // property support in Configuration in Hadoop 2. But since Hadoop-1 does not
-  // contain these changes, we will do our own as usual. Replace these when H2 is default.
-  public static int getInt(Configuration conf, String name,
-      String deprecatedName, int defaultValue) {
-    if (conf.get(deprecatedName) != null) {
-      LOG.warn(String.format("Config option \"%s\" is deprecated. Instead, use \"%s\""
-        , deprecatedName, name));
-      return conf.getInt(deprecatedName, defaultValue);
-    } else {
-      return conf.getInt(name, defaultValue);
-    }
   }
 
   /**

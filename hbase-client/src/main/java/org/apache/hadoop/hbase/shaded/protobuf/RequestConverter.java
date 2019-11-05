@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.hadoop.hbase.CellScannable;
 import org.apache.hadoop.hbase.ClusterMetrics.Option;
@@ -120,6 +121,8 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.IsCatalogJ
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.IsCleanerChoreEnabledRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.IsMasterRunningRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.IsNormalizerEnabledRequest;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos
+    .IsSnapshotCleanupEnabledRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.IsSplitOrMergeEnabledRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.MergeTableRegionsRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.ModifyColumnRequest;
@@ -134,6 +137,8 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.RunCleaner
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SetBalancerRunningRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SetCleanerChoreRunningRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SetNormalizerRunningRequest;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos
+    .SetSnapshotCleanupRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SetSplitOrMergeEnabledRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SetTableStateInMetaRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SplitTableRegionRequest;
@@ -563,7 +568,7 @@ public final class RequestConverter {
       final byte[] regionName, boolean assignSeqNum,
       final Token<?> userToken, final String bulkToken) {
     return buildBulkLoadHFileRequest(familyPaths, regionName, assignSeqNum, userToken, bulkToken,
-        false);
+        false, null, true);
   }
 
   /**
@@ -578,9 +583,9 @@ public final class RequestConverter {
    * @return a bulk load request
    */
   public static BulkLoadHFileRequest buildBulkLoadHFileRequest(
-      final List<Pair<byte[], String>> familyPaths,
-      final byte[] regionName, boolean assignSeqNum,
-      final Token<?> userToken, final String bulkToken, boolean copyFiles) {
+      final List<Pair<byte[], String>> familyPaths, final byte[] regionName, boolean assignSeqNum,
+        final Token<?> userToken, final String bulkToken, boolean copyFiles,
+          List<String> clusterIds, boolean replicate) {
     RegionSpecifier region = RequestConverter.buildRegionSpecifier(
       RegionSpecifierType.REGION_NAME, regionName);
 
@@ -618,6 +623,10 @@ public final class RequestConverter {
       request.setBulkToken(bulkToken);
     }
     request.setCopyFile(copyFiles);
+    if (clusterIds != null) {
+      request.addAllClusterIds(clusterIds);
+    }
+    request.setReplicate(replicate);
     return request.build();
   }
 
@@ -940,27 +949,6 @@ public final class RequestConverter {
   }
 
   /**
-   * Create a protocol buffer OpenRegionRequest to open a list of regions
-   * @param server the serverName for the RPC
-   * @param regionOpenInfos info of a list of regions to open
-   * @return a protocol buffer OpenRegionRequest
-   */
-  public static OpenRegionRequest buildOpenRegionRequest(ServerName server,
-      final List<Pair<RegionInfo, List<ServerName>>> regionOpenInfos) {
-    OpenRegionRequest.Builder builder = OpenRegionRequest.newBuilder();
-    for (Pair<RegionInfo, List<ServerName>> regionOpenInfo : regionOpenInfos) {
-      builder.addOpenInfo(buildRegionOpenInfo(regionOpenInfo.getFirst(),
-        regionOpenInfo.getSecond()));
-    }
-    if (server != null) {
-      builder.setServerStartCode(server.getStartcode());
-    }
-    // send the master's wall clock time as well, so that the RS can refer to it
-    builder.setMasterSystemTime(EnvironmentEdgeManager.currentTime());
-    return builder.build();
-  }
-
-  /**
    * Create a protocol buffer OpenRegionRequest for a given region
    * @param server the serverName for the RPC
    * @param region the region to open
@@ -970,7 +958,7 @@ public final class RequestConverter {
   public static OpenRegionRequest buildOpenRegionRequest(ServerName server,
       final RegionInfo region, List<ServerName> favoredNodes) {
     OpenRegionRequest.Builder builder = OpenRegionRequest.newBuilder();
-    builder.addOpenInfo(buildRegionOpenInfo(region, favoredNodes));
+    builder.addOpenInfo(buildRegionOpenInfo(region, favoredNodes, -1L));
     if (server != null) {
       builder.setServerStartCode(server.getStartcode());
     }
@@ -1621,8 +1609,8 @@ public final class RequestConverter {
   /**
    * Create a RegionOpenInfo based on given region info and version of offline node
    */
-  public static RegionOpenInfo buildRegionOpenInfo(
-      final RegionInfo region, final List<ServerName> favoredNodes) {
+  public static RegionOpenInfo buildRegionOpenInfo(RegionInfo region, List<ServerName> favoredNodes,
+      long openProcId) {
     RegionOpenInfo.Builder builder = RegionOpenInfo.newBuilder();
     builder.setRegion(ProtobufUtil.toRegionInfo(region));
     if (favoredNodes != null) {
@@ -1630,6 +1618,7 @@ public final class RequestConverter {
         builder.addFavoredNodes(ProtobufUtil.toServerName(server));
       }
     }
+    builder.setOpenProcId(openProcId);
     return builder.build();
   }
 
@@ -1888,4 +1877,61 @@ public final class RequestConverter {
     return TransitReplicationPeerSyncReplicationStateRequest.newBuilder().setPeerId(peerId)
         .setSyncReplicationState(ReplicationPeerConfigUtil.toSyncReplicationState(state)).build();
   }
+
+  // HBCK2
+  public static MasterProtos.AssignsRequest toAssignRegionsRequest(
+      List<String> encodedRegionNames, boolean override) {
+    MasterProtos.AssignsRequest.Builder b = MasterProtos.AssignsRequest.newBuilder();
+    return b.addAllRegion(toEncodedRegionNameRegionSpecifiers(encodedRegionNames)).
+        setOverride(override).build();
+  }
+
+  public static MasterProtos.UnassignsRequest toUnassignRegionsRequest(
+      List<String> encodedRegionNames, boolean override) {
+    MasterProtos.UnassignsRequest.Builder b =
+        MasterProtos.UnassignsRequest.newBuilder();
+    return b.addAllRegion(toEncodedRegionNameRegionSpecifiers(encodedRegionNames)).
+        setOverride(override).build();
+  }
+
+  public static MasterProtos.ScheduleServerCrashProcedureRequest
+      toScheduleServerCrashProcedureRequest(List<ServerName> serverNames) {
+    MasterProtos.ScheduleServerCrashProcedureRequest.Builder builder =
+        MasterProtos.ScheduleServerCrashProcedureRequest.newBuilder();
+    serverNames.stream().map(ProtobufUtil::toServerName).forEach(sn -> builder.addServerName(sn));
+    return builder.build();
+  }
+
+  private static List<RegionSpecifier> toEncodedRegionNameRegionSpecifiers(
+      List<String> encodedRegionNames) {
+    return encodedRegionNames.stream().
+        map(r -> buildRegionSpecifier(RegionSpecifierType.ENCODED_REGION_NAME, Bytes.toBytes(r))).
+        collect(Collectors.toList());
+  }
+
+  /**
+   * Creates SetSnapshotCleanupRequest for turning on/off auto snapshot cleanup
+   *
+   * @param enabled Set to <code>true</code> to enable,
+   *   <code>false</code> to disable.
+   * @param synchronous If <code>true</code>, it waits until current snapshot cleanup is completed,
+   *   if outstanding.
+   * @return a SetSnapshotCleanupRequest
+   */
+  public static SetSnapshotCleanupRequest buildSetSnapshotCleanupRequest(
+      final boolean enabled, final boolean synchronous) {
+    return SetSnapshotCleanupRequest.newBuilder().setEnabled(enabled).setSynchronous(synchronous)
+        .build();
+  }
+
+  /**
+   * Creates IsSnapshotCleanupEnabledRequest to determine if auto snapshot cleanup
+   * based on TTL expiration is turned on
+   *
+   * @return IsSnapshotCleanupEnabledRequest
+   */
+  public static IsSnapshotCleanupEnabledRequest buildIsSnapshotCleanupEnabledRequest() {
+    return IsSnapshotCleanupEnabledRequest.newBuilder().build();
+  }
+
 }

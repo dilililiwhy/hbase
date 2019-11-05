@@ -46,7 +46,6 @@ import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Admin;
-import org.apache.hadoop.hbase.client.ClusterConnection;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.client.Delete;
@@ -65,17 +64,11 @@ import org.apache.hadoop.hbase.master.assignment.RegionStates;
 import org.apache.hadoop.hbase.mob.MobFileName;
 import org.apache.hadoop.hbase.mob.MobUtils;
 import org.apache.hadoop.hbase.regionserver.HRegionFileSystem;
-import org.apache.hadoop.hbase.util.HBaseFsck.ErrorReporter;
-import org.apache.hadoop.hbase.util.HBaseFsck.HbckInfo;
-import org.apache.hadoop.hbase.util.HBaseFsck.TableInfo;
 import org.apache.hadoop.hbase.util.hbck.HFileCorruptionChecker;
 import org.apache.zookeeper.KeeperException;
 import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
-import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos;
 
 /**
  * This is the base class for  HBaseFsck's ability to detect reasons for inconsistent tables.
@@ -98,7 +91,7 @@ public class BaseTestHBaseFsck {
   protected static RegionStates regionStates;
   protected static ExecutorService tableExecutorService;
   protected static ScheduledThreadPoolExecutor hbfsckExecutorService;
-  protected static ClusterConnection connection;
+  protected static Connection connection;
   protected static Admin admin;
 
   // for the instance, reset every test run
@@ -170,7 +163,7 @@ public class BaseTestHBaseFsck {
     }
 
     for (HRegionLocation location : locations) {
-      RegionInfo hri = location.getRegionInfo();
+      RegionInfo hri = location.getRegion();
       ServerName hsa = location.getServerName();
       if (Bytes.compareTo(hri.getStartKey(), startKey) == 0
           && Bytes.compareTo(hri.getEndKey(), endKey) == 0
@@ -298,17 +291,13 @@ public class BaseTestHBaseFsck {
 
   /**
    * delete table in preparation for next test
-   *
-   * @param tablename
-   * @throws IOException
    */
   void cleanupTable(TableName tablename) throws Exception {
     if (tbl != null) {
       tbl.close();
       tbl = null;
     }
-
-    ((ClusterConnection) connection).clearRegionCache();
+    connection.clearRegionLocationCache();
     deleteTable(TEST_UTIL, tablename);
   }
 
@@ -320,10 +309,8 @@ public class BaseTestHBaseFsck {
     Collection<ServerName> regionServers = status.getLiveServerMetrics().keySet();
     Map<ServerName, List<String>> mm = new HashMap<>();
     for (ServerName hsi : regionServers) {
-      AdminProtos.AdminService.BlockingInterface server = connection.getAdmin(hsi);
-
       // list all online regions from this region server
-      List<RegionInfo> regions = ProtobufUtil.getOnlineRegions(server);
+      List<RegionInfo> regions = admin.getRegions(hsi);
       List<String> regionNames = new ArrayList<>(regions.size());
       for (RegionInfo hri : regions) {
         regionNames.add(hri.getRegionNameAsString());
@@ -462,7 +449,7 @@ public class BaseTestHBaseFsck {
   }
 
 
-  static class MockErrorReporter implements ErrorReporter {
+  static class MockErrorReporter implements HbckErrorReporter {
     static int calledCount = 0;
 
     @Override
@@ -486,19 +473,19 @@ public class BaseTestHBaseFsck {
     }
 
     @Override
-    public void reportError(ERROR_CODE errorCode, String message, TableInfo table) {
+    public void reportError(ERROR_CODE errorCode, String message, HbckTableInfo table) {
       calledCount++;
     }
 
     @Override
     public void reportError(ERROR_CODE errorCode,
-        String message, TableInfo table, HbckInfo info) {
+        String message, HbckTableInfo table, HbckRegionInfo info) {
       calledCount++;
     }
 
     @Override
     public void reportError(ERROR_CODE errorCode, String message,
-        TableInfo table, HbckInfo info1, HbckInfo info2) {
+        HbckTableInfo table, HbckRegionInfo info1, HbckRegionInfo info2) {
       calledCount++;
     }
 
@@ -534,7 +521,7 @@ public class BaseTestHBaseFsck {
     }
 
     @Override
-    public boolean tableHasErrors(TableInfo table) {
+    public boolean tableHasErrors(HbckTableInfo table) {
       calledCount++;
       return false;
     }
@@ -546,7 +533,7 @@ public class BaseTestHBaseFsck {
     HRegionLocation metaLocation = connection.getRegionLocator(TableName.META_TABLE_NAME)
         .getRegionLocation(HConstants.EMPTY_START_ROW);
     ServerName hsa = metaLocation.getServerName();
-    RegionInfo hri = metaLocation.getRegionInfo();
+    RegionInfo hri = metaLocation.getRegion();
     if (unassign) {
       LOG.info("Undeploying meta region " + hri + " from server " + hsa);
       try (Connection unmanagedConnection = ConnectionFactory.createConnection(conf)) {

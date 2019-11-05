@@ -1,5 +1,4 @@
-/*
- *
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,10 +20,12 @@ package org.apache.hadoop.hbase.client;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
+import org.apache.hadoop.hbase.HBaseInterfaceAudience;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.util.FutureUtils;
 import org.apache.yetus.audience.InterfaceAudience;
 
 /**
@@ -124,7 +125,9 @@ public interface Connection extends Abortable, Closeable {
    *
    * @return a {@link BufferedMutator} for the supplied tableName.
    */
-  BufferedMutator getBufferedMutator(TableName tableName) throws IOException;
+  default BufferedMutator getBufferedMutator(TableName tableName) throws IOException {
+    return getBufferedMutator(new BufferedMutatorParams(tableName));
+  }
 
   /**
    * Retrieve a {@link BufferedMutator} for performing client-side buffering of writes. The
@@ -155,6 +158,16 @@ public interface Connection extends Abortable, Closeable {
   RegionLocator getRegionLocator(TableName tableName) throws IOException;
 
   /**
+   * Clear all the entries in the region location cache, for all the tables.
+   * <p/>
+   * If you only want to clear the cache for a specific table, use
+   * {@link RegionLocator#clearRegionLocationCache()}.
+   * <p/>
+   * This may cause performance issue so use it with caution.
+   */
+  void clearRegionLocationCache();
+
+  /**
    * Retrieve an Admin implementation to administer an HBase cluster.
    * The returned Admin is not guaranteed to be thread-safe.  A new instance should be created for
    * each using thread.  This is a lightweight operation.  Pooling or caching of the returned
@@ -182,4 +195,50 @@ public interface Connection extends Abortable, Closeable {
    * @param pool the thread pool to use for requests like batch and scan
    */
   TableBuilder getTableBuilder(TableName tableName, ExecutorService pool);
+
+  /**
+   * Convert this connection to an {@link AsyncConnection}.
+   * <p/>
+   * Usually we will return the same instance if you call this method multiple times so you can
+   * consider this as a light-weighted operation.
+   */
+  AsyncConnection toAsyncConnection();
+
+  /**
+   * Retrieve an Hbck implementation to fix an HBase cluster.
+   * The returned Hbck is not guaranteed to be thread-safe. A new instance should be created by
+   * each thread. This is a lightweight operation. Pooling or caching of the returned Hbck instance
+   * is not recommended.
+   * <br>
+   * The caller is responsible for calling {@link Hbck#close()} on the returned Hbck instance.
+   *<br>
+   * This will be used mostly by hbck tool.
+   *
+   * @return an Hbck instance for active master. Active master is fetched from the zookeeper.
+   */
+  @InterfaceAudience.LimitedPrivate(HBaseInterfaceAudience.HBCK)
+  default Hbck getHbck() throws IOException {
+    return FutureUtils.get(toAsyncConnection().getHbck());
+  }
+
+  /**
+   * Retrieve an Hbck implementation to fix an HBase cluster.
+   * The returned Hbck is not guaranteed to be thread-safe. A new instance should be created by
+   * each thread. This is a lightweight operation. Pooling or caching of the returned Hbck instance
+   * is not recommended.
+   * <br>
+   * The caller is responsible for calling {@link Hbck#close()} on the returned Hbck instance.
+   *<br>
+   * This will be used mostly by hbck tool. This may only be used to by pass getting
+   * registered master from ZK. In situations where ZK is not available or active master is not
+   * registered with ZK and user can get master address by other means, master can be explicitly
+   * specified.
+   *
+   * @param masterServer explicit {@link ServerName} for master server
+   * @return an Hbck instance for a specified master server
+   */
+  @InterfaceAudience.LimitedPrivate(HBaseInterfaceAudience.HBCK)
+  default Hbck getHbck(ServerName masterServer) throws IOException {
+    return toAsyncConnection().getHbck(masterServer);
+  }
 }

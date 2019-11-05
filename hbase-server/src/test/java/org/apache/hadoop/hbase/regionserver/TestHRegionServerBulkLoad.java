@@ -25,9 +25,11 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -37,7 +39,7 @@ import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HColumnDescriptor;
-import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValueUtil;
@@ -46,14 +48,11 @@ import org.apache.hadoop.hbase.MultithreadedTestUtil.TestContext;
 import org.apache.hadoop.hbase.StartMiniClusterOption;
 import org.apache.hadoop.hbase.TableExistsException;
 import org.apache.hadoop.hbase.TableName;
-import org.apache.hadoop.hbase.client.ClientServiceCallable;
-import org.apache.hadoop.hbase.client.ClusterConnection;
+import org.apache.hadoop.hbase.client.Connection;
+import org.apache.hadoop.hbase.client.RegionLocator;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
-import org.apache.hadoop.hbase.client.RpcRetryingCaller;
-import org.apache.hadoop.hbase.client.RpcRetryingCallerFactory;
 import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.client.SecureBulkLoadClient;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessor;
@@ -65,14 +64,13 @@ import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileContext;
 import org.apache.hadoop.hbase.io.hfile.HFileContextBuilder;
-import org.apache.hadoop.hbase.ipc.RpcControllerFactory;
 import org.apache.hadoop.hbase.regionserver.compactions.CompactionLifeCycleTracker;
 import org.apache.hadoop.hbase.regionserver.compactions.CompactionRequest;
 import org.apache.hadoop.hbase.regionserver.wal.TestWALActionsListener;
 import org.apache.hadoop.hbase.testclassification.LargeTests;
 import org.apache.hadoop.hbase.testclassification.RegionServerTests;
+import org.apache.hadoop.hbase.tool.BulkLoadHFiles;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.wal.WAL;
 import org.apache.hadoop.hbase.wal.WALEdit;
 import org.apache.hadoop.hbase.wal.WALKey;
@@ -87,10 +85,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
-
-import org.apache.hadoop.hbase.shaded.protobuf.RequestConverter;
-import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos;
-import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos.CompactRegionRequest;
 
 /**
  * Tests bulk loading of HFiles and shows the atomicity or lack of atomicity of
@@ -204,60 +198,24 @@ public class TestHRegionServerBulkLoad {
       // create HFiles for different column families
       FileSystem fs = UTIL.getTestFileSystem();
       byte[] val = Bytes.toBytes(String.format("%010d", iteration));
-      final List<Pair<byte[], String>> famPaths = new ArrayList<>(NUM_CFS);
+      Map<byte[], List<Path>> family2Files = new TreeMap<>(Bytes.BYTES_COMPARATOR);
       for (int i = 0; i < NUM_CFS; i++) {
         Path hfile = new Path(dir, family(i));
         byte[] fam = Bytes.toBytes(family(i));
         createHFile(fs, hfile, fam, QUAL, val, 1000);
-        famPaths.add(new Pair<>(fam, hfile.toString()));
+        family2Files.put(fam, Collections.singletonList(hfile));
       }
-
       // bulk load HFiles
-      final ClusterConnection conn = (ClusterConnection)UTIL.getConnection();
-      Table table = conn.getTable(tableName);
-      final String bulkToken = new SecureBulkLoadClient(UTIL.getConfiguration(), table).
-          prepareBulkLoad(conn);
-      ClientServiceCallable<Void> callable = new ClientServiceCallable<Void>(conn,
-          tableName, Bytes.toBytes("aaa"),
-          new RpcControllerFactory(UTIL.getConfiguration()).newController(), HConstants.PRIORITY_UNSET) {
-        @Override
-        public Void rpcCall() throws Exception {
-          LOG.debug("Going to connect to server " + getLocation() + " for row "
-              + Bytes.toStringBinary(getRow()));
-          SecureBulkLoadClient secureClient = null;
-          byte[] regionName = getLocation().getRegionInfo().getRegionName();
-          try (Table table = conn.getTable(getTableName())) {
-            secureClient = new SecureBulkLoadClient(UTIL.getConfiguration(), table);
-            secureClient.secureBulkLoadHFiles(getStub(), famPaths, regionName,
-                  true, null, bulkToken);
-          }
-          return null;
-        }
-      };
-      RpcRetryingCallerFactory factory = new RpcRetryingCallerFactory(conf);
-      RpcRetryingCaller<Void> caller = factory.<Void> newCaller();
-      caller.callWithRetries(callable, Integer.MAX_VALUE);
-
+      BulkLoadHFiles.create(UTIL.getConfiguration()).bulkLoad(tableName, family2Files);
+      final Connection conn = UTIL.getConnection();
       // Periodically do compaction to reduce the number of open file handles.
       if (numBulkLoads.get() % 5 == 0) {
         // 5 * 50 = 250 open file handles!
-        callable = new ClientServiceCallable<Void>(conn,
-            tableName, Bytes.toBytes("aaa"),
-            new RpcControllerFactory(UTIL.getConfiguration()).newController(), HConstants.PRIORITY_UNSET) {
-          @Override
-          protected Void rpcCall() throws Exception {
-            LOG.debug("compacting " + getLocation() + " for row "
-                + Bytes.toStringBinary(getRow()));
-            AdminProtos.AdminService.BlockingInterface server =
-              conn.getAdmin(getLocation().getServerName());
-            CompactRegionRequest request = RequestConverter.buildCompactRegionRequest(
-                getLocation().getRegionInfo().getRegionName(), true, null);
-            server.compactRegion(null, request);
-            numCompactions.incrementAndGet();
-            return null;
-          }
-        };
-        caller.callWithRetries(callable, Integer.MAX_VALUE);
+        try (RegionLocator locator = conn.getRegionLocator(tableName)) {
+          HRegionLocation loc = locator.getRegionLocation(Bytes.toBytes("aaa"), true);
+          conn.getAdmin().compactRegion(loc.getRegion().getRegionName());
+          numCompactions.incrementAndGet();
+        }
       }
     }
   }

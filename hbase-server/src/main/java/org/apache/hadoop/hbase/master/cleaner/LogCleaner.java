@@ -21,22 +21,25 @@ import static org.apache.hadoop.hbase.HConstants.HBASE_MASTER_LOGCLEANER_PLUGINS
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.Stoppable;
+import org.apache.hadoop.hbase.conf.ConfigurationObserver;
 import org.apache.hadoop.hbase.master.procedure.MasterProcedureUtil;
 import org.apache.hadoop.hbase.wal.AbstractFSWALProvider;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import org.apache.hbase.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.hbase.thirdparty.com.google.common.base.Preconditions;
 
 /**
  * This Chore, every time it runs, will attempt to delete the WALs and Procedure WALs in the old
@@ -44,8 +47,9 @@ import org.apache.hbase.thirdparty.com.google.common.annotations.VisibleForTesti
  * @see BaseLogCleanerDelegate
  */
 @InterfaceAudience.Private
-public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate> {
-  private static final Logger LOG = LoggerFactory.getLogger(LogCleaner.class.getName());
+public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate>
+  implements ConfigurationObserver {
+  private static final Logger LOG = LoggerFactory.getLogger(LogCleaner.class);
 
   public static final String OLD_WALS_CLEANER_THREAD_SIZE = "hbase.oldwals.cleaner.thread.size";
   public static final int DEFAULT_OLD_WALS_CLEANER_THREAD_SIZE = 2;
@@ -55,16 +59,9 @@ public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate> {
   @VisibleForTesting
   static final long DEFAULT_OLD_WALS_CLEANER_THREAD_TIMEOUT_MSEC = 60 * 1000L;
 
-  public static final String OLD_WALS_CLEANER_THREAD_CHECK_INTERVAL_MSEC =
-      "hbase.oldwals.cleaner.thread.check.interval.msec";
-  @VisibleForTesting
-  static final long DEFAULT_OLD_WALS_CLEANER_THREAD_CHECK_INTERVAL_MSEC = 500L;
-
-
   private final LinkedBlockingQueue<CleanerContext> pendingDelete;
   private List<Thread> oldWALsCleaner;
   private long cleanerThreadTimeoutMsec;
-  private long cleanerThreadCheckIntervalMsec;
 
   /**
    * @param period the period of time to sleep between each run
@@ -72,17 +69,17 @@ public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate> {
    * @param conf configuration to use
    * @param fs handle to the FS
    * @param oldLogDir the path to the archived logs
+   * @param pool the thread pool used to scan directories
    */
   public LogCleaner(final int period, final Stoppable stopper, Configuration conf, FileSystem fs,
-      Path oldLogDir) {
-    super("LogsCleaner", period, stopper, conf, fs, oldLogDir, HBASE_MASTER_LOGCLEANER_PLUGINS);
+    Path oldLogDir, DirScanPool pool) {
+    super("LogsCleaner", period, stopper, conf, fs, oldLogDir, HBASE_MASTER_LOGCLEANER_PLUGINS,
+      pool);
     this.pendingDelete = new LinkedBlockingQueue<>();
     int size = conf.getInt(OLD_WALS_CLEANER_THREAD_SIZE, DEFAULT_OLD_WALS_CLEANER_THREAD_SIZE);
     this.oldWALsCleaner = createOldWalsCleaner(size);
     this.cleanerThreadTimeoutMsec = conf.getLong(OLD_WALS_CLEANER_THREAD_TIMEOUT_MSEC,
-        DEFAULT_OLD_WALS_CLEANER_THREAD_TIMEOUT_MSEC);
-    this.cleanerThreadCheckIntervalMsec = conf.getLong(OLD_WALS_CLEANER_THREAD_CHECK_INTERVAL_MSEC,
-        DEFAULT_OLD_WALS_CLEANER_THREAD_CHECK_INTERVAL_MSEC);
+      DEFAULT_OLD_WALS_CLEANER_THREAD_TIMEOUT_MSEC);
   }
 
   @Override
@@ -93,39 +90,35 @@ public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate> {
 
   @Override
   public void onConfigurationChange(Configuration conf) {
-    super.onConfigurationChange(conf);
-
     int newSize = conf.getInt(OLD_WALS_CLEANER_THREAD_SIZE, DEFAULT_OLD_WALS_CLEANER_THREAD_SIZE);
     if (newSize == oldWALsCleaner.size()) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Size from configuration is the same as previous which is " +
-          newSize + ", no need to update.");
-      }
+      LOG.debug("Size from configuration is the same as previous which "
+          + "is {}, no need to update.", newSize);
       return;
     }
     interruptOldWALsCleaner();
     oldWALsCleaner = createOldWalsCleaner(newSize);
     cleanerThreadTimeoutMsec = conf.getLong(OLD_WALS_CLEANER_THREAD_TIMEOUT_MSEC,
         DEFAULT_OLD_WALS_CLEANER_THREAD_TIMEOUT_MSEC);
-    cleanerThreadCheckIntervalMsec = conf.getLong(OLD_WALS_CLEANER_THREAD_CHECK_INTERVAL_MSEC,
-        DEFAULT_OLD_WALS_CLEANER_THREAD_CHECK_INTERVAL_MSEC);
   }
 
   @Override
   protected int deleteFiles(Iterable<FileStatus> filesToDelete) {
-    List<CleanerContext> results = new LinkedList<>();
-    for (FileStatus toDelete : filesToDelete) {
-      CleanerContext context = CleanerContext.createCleanerContext(toDelete,
-          cleanerThreadTimeoutMsec);
-      if (context != null) {
-        pendingDelete.add(context);
-        results.add(context);
+    List<CleanerContext> results = new ArrayList<>();
+    for (FileStatus file : filesToDelete) {
+      LOG.trace("Scheduling file {} for deletion", file);
+      if (file != null) {
+        results.add(new CleanerContext(file));
       }
     }
 
+    LOG.debug("Old WAL files pending deletion: {}", results);
+    pendingDelete.addAll(results);
+
     int deletedFiles = 0;
     for (CleanerContext res : results) {
-      deletedFiles += res.getResult(cleanerThreadCheckIntervalMsec) ? 1 : 0;
+      LOG.trace("Awaiting the results for deletion of old WAL file: {}", res);
+      deletedFiles += res.getResult(this.cleanerThreadTimeoutMsec) ? 1 : 0;
     }
     return deletedFiles;
   }
@@ -146,13 +139,8 @@ public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate> {
     return cleanerThreadTimeoutMsec;
   }
 
-  @VisibleForTesting
-  long getCleanerThreadCheckIntervalMsec() {
-    return cleanerThreadCheckIntervalMsec;
-  }
-
   private List<Thread> createOldWalsCleaner(int size) {
-    LOG.info("Creating OldWALs cleaners with size=" + size);
+    LOG.info("Creating {} OldWALs cleaner threads", size);
 
     List<Thread> oldWALsCleaner = new ArrayList<>(size);
     for (int i = 0; i < size; i++) {
@@ -167,6 +155,7 @@ public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate> {
 
   private void interruptOldWALsCleaner() {
     for (Thread cleaner : oldWALsCleaner) {
+      LOG.trace("Interrupting thread: {}", cleaner);
       cleaner.interrupt();
     }
     oldWALsCleaner.clear();
@@ -174,95 +163,78 @@ public class LogCleaner extends CleanerChore<BaseLogCleanerDelegate> {
 
   private void deleteFile() {
     while (true) {
-      CleanerContext context = null;
-      boolean succeed = false;
-      boolean interrupted = false;
       try {
-        context = pendingDelete.take();
-        if (context != null) {
-          FileStatus toClean = context.getTargetToClean();
-          succeed = this.fs.delete(toClean.getPath(), false);
+        final CleanerContext context = pendingDelete.take();
+        Preconditions.checkNotNull(context);
+        FileStatus oldWalFile = context.getTargetToClean();
+        try {
+          LOG.debug("Attempting to delete old WAL file: {}", oldWalFile);
+          boolean succeed = this.fs.delete(oldWalFile.getPath(), false);
+          context.setResult(succeed);
+        } catch (IOException e) {
+          // fs.delete() fails.
+          LOG.warn("Failed to clean old WAL file", e);
+          context.setResult(false);
         }
       } catch (InterruptedException ite) {
-        // It's most likely from configuration changing request
-        if (context != null) {
-          LOG.warn("Interrupted while cleaning oldWALs " +
-              context.getTargetToClean() + ", try to clean it next round.");
-        }
-        interrupted = true;
-      } catch (IOException e) {
-        // fs.delete() fails.
-        LOG.warn("Failed to clean oldwals with exception: " + e);
-        succeed = false;
-      } finally {
-        if (context != null) {
-          context.setResult(succeed);
-        }
-        if (interrupted) {
-          // Restore interrupt status
-          Thread.currentThread().interrupt();
-          break;
-        }
+        // It is most likely from configuration changing request
+        LOG.warn("Interrupted while cleaning old WALs, will "
+            + "try to clean it next round. Exiting.");
+        // Restore interrupt status
+        Thread.currentThread().interrupt();
+        return;
       }
-    }
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Exiting cleaner.");
+      LOG.debug("Exiting");
     }
   }
 
   @Override
   public synchronized void cancel(boolean mayInterruptIfRunning) {
+    LOG.debug("Cancelling LogCleaner");
     super.cancel(mayInterruptIfRunning);
-    for (Thread t : oldWALsCleaner) {
-      t.interrupt();
-    }
+    interruptOldWALsCleaner();
   }
 
   private static final class CleanerContext {
 
     final FileStatus target;
-    volatile boolean result;
-    volatile boolean setFromCleaner = false;
-    long timeoutMsec;
+    final AtomicBoolean result;
+    final CountDownLatch remainingResults;
 
-    static CleanerContext createCleanerContext(FileStatus status, long timeoutMsec) {
-      return status != null ? new CleanerContext(status, timeoutMsec) : null;
-    }
-
-    private CleanerContext(FileStatus status, long timeoutMsec) {
+    private CleanerContext(FileStatus status) {
       this.target = status;
-      this.result = false;
-      this.timeoutMsec = timeoutMsec;
+      this.result = new AtomicBoolean(false);
+      this.remainingResults = new CountDownLatch(1);
     }
 
-    synchronized void setResult(boolean res) {
-      this.result = res;
-      this.setFromCleaner = true;
-      notify();
+    void setResult(boolean res) {
+      this.result.set(res);
+      this.remainingResults.countDown();
     }
 
-    synchronized boolean getResult(long waitIfNotFinished) {
-      long totalTimeMsec = 0;
+    boolean getResult(long waitIfNotFinished) {
       try {
-        while (!setFromCleaner) {
-          long startTimeNanos = System.nanoTime();
-          wait(waitIfNotFinished);
-          totalTimeMsec += TimeUnit.MILLISECONDS.convert(System.nanoTime() - startTimeNanos,
-              TimeUnit.NANOSECONDS);
-          if (totalTimeMsec >= timeoutMsec) {
-            LOG.warn("Spend too much time " + totalTimeMsec + " ms to delete oldwals " + target);
-            return result;
-          }
+        boolean completed = this.remainingResults.await(waitIfNotFinished,
+            TimeUnit.MILLISECONDS);
+        if (!completed) {
+          LOG.warn("Spend too much time [{}ms] to delete old WAL file: {}",
+              waitIfNotFinished, target);
+          return false;
         }
       } catch (InterruptedException e) {
-        LOG.warn("Interrupted while waiting deletion of " + target);
-        return result;
+        LOG.warn("Interrupted while awaiting deletion of WAL file: {}", target);
+        return false;
       }
-      return result;
+      return result.get();
     }
 
     FileStatus getTargetToClean() {
       return target;
+    }
+
+    @Override
+    public String toString() {
+      return "CleanerContext [target=" + target + ", result=" + result + "]";
     }
   }
 }

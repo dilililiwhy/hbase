@@ -20,7 +20,6 @@
 package org.apache.hadoop.hbase.filter;
 
 import java.util.ArrayList;
-import java.util.Objects;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellComparator;
@@ -50,12 +49,6 @@ public class InclusiveStopFilter extends FilterBase {
 
   public byte[] getStopRowKey() {
     return this.stopRowKey;
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -135,15 +128,11 @@ public class InclusiveStopFilter extends FilterBase {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof InclusiveStopFilter))) {
-      return false;
-    }
-    InclusiveStopFilter f = (InclusiveStopFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(Bytes.hashCode(this.stopRowKey));
+    return Bytes.hashCode(this.stopRowKey);
   }
 }

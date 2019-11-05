@@ -178,6 +178,17 @@ public class FSTableDescriptors implements TableDescriptors {
         // Disable blooms for meta.  Needs work.  Seems to mess w/ getClosestOrBefore.
         .setBloomFilterType(BloomType.NONE)
         .build())
+      .setColumnFamily(ColumnFamilyDescriptorBuilder
+        .newBuilder(HConstants.NAMESPACE_FAMILY)
+        .setMaxVersions(conf.getInt(HConstants.HBASE_META_VERSIONS,
+                HConstants.DEFAULT_HBASE_META_VERSIONS))
+        .setInMemory(true)
+        .setBlocksize(conf.getInt(HConstants.HBASE_META_BLOCK_SIZE,
+                HConstants.DEFAULT_HBASE_META_BLOCK_SIZE))
+        .setScope(HConstants.REPLICATION_SCOPE_LOCAL)
+        // Disable blooms for meta.  Needs work.  Seems to mess w/ getClosestOrBefore.
+        .setBloomFilterType(BloomType.NONE)
+        .build())
       .setCoprocessor(CoprocessorDescriptorBuilder.newBuilder(
         MultiRowMutationEndpoint.class.getName())
         .setPriority(Coprocessor.PRIORITY_SYSTEM).build());
@@ -265,7 +276,7 @@ public class FSTableDescriptors implements TableDescriptors {
 
     if (fsvisited && usecache) {
       for (Map.Entry<TableName, TableDescriptor> entry: this.cache.entrySet()) {
-        tds.put(entry.getKey().toString(), entry.getValue());
+        tds.put(entry.getKey().getNameWithNamespaceInclAsString(), entry.getValue());
       }
       // add hbase:meta to the response
       tds.put(this.metaTableDescriptor.getTableName().getNameAsString(), metaTableDescriptor);
@@ -284,7 +295,7 @@ public class FSTableDescriptors implements TableDescriptors {
           allvisited = false;
           continue;
         } else {
-          tds.put(htd.getTableName().getNameAsString(), htd);
+          tds.put(htd.getTableName().getNameWithNamespaceInclAsString(), htd);
         }
         fsvisited = allvisited;
       }

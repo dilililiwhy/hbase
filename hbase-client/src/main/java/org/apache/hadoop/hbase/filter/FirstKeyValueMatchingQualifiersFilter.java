@@ -43,7 +43,8 @@ import org.apache.hbase.thirdparty.com.google.protobuf.UnsafeByteOperations;
  * caveat, this filter is only useful for special cases
  * like org.apache.hadoop.hbase.mapreduce.RowCounter.
  * <p>
- * @deprecated Deprecated in 2.0. See HBASE-13347
+ * @deprecated Deprecated in 2.0.0 and will be removed in 3.0.0.
+ * @see <a href="https://issues.apache.org/jira/browse/HBASE-13347">HBASE-13347</a>
  */
 @InterfaceAudience.Public
 @Deprecated
@@ -59,12 +60,6 @@ public class FirstKeyValueMatchingQualifiersFilter extends FirstKeyOnlyFilter {
    */
   public FirstKeyValueMatchingQualifiersFilter(Set<byte []> qualifiers) {
     this.qualifiers = qualifiers;
-  }
-
-  @Deprecated
-  @Override
-  public ReturnCode filterKeyValue(final Cell c) {
-    return filterCell(c);
   }
 
   @Override
@@ -137,11 +132,7 @@ public class FirstKeyValueMatchingQualifiersFilter extends FirstKeyOnlyFilter {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof FirstKeyValueMatchingQualifiersFilter))) {
-      return false;
-    }
-    FirstKeyValueMatchingQualifiersFilter f = (FirstKeyValueMatchingQualifiersFilter) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override

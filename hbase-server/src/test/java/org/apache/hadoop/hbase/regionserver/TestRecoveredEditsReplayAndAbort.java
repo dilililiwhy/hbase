@@ -46,7 +46,7 @@ import org.apache.hadoop.hbase.wal.WALEdit;
 import org.apache.hadoop.hbase.wal.WALFactory;
 import org.apache.hadoop.hbase.wal.WALKeyImpl;
 import org.apache.hadoop.hbase.wal.WALProvider;
-import org.apache.hadoop.hbase.wal.WALSplitter;
+import org.apache.hadoop.hbase.wal.WALSplitUtil;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -122,6 +122,7 @@ public class TestRecoveredEditsReplayAndAbort {
     Mockito.when(rs.getNonceManager()).thenReturn(null);
     Mockito.when(rs.getServerName()).thenReturn(ServerName
         .valueOf("test", 0, 111));
+    Mockito.when(rs.getConfiguration()).thenReturn(CONF);
     //create a region
     TableName testTable = TableName.valueOf("testRecoveredEidtsReplayAndAbort");
     TableDescriptor htd = TableDescriptorBuilder.newBuilder(testTable)
@@ -145,7 +146,7 @@ public class TestRecoveredEditsReplayAndAbort {
       FileSystem fs = region.getRegionFileSystem().getFileSystem();
       byte[] regionName = region.getRegionInfo().getEncodedNameAsBytes();
 
-      Path recoveredEditsDir = WALSplitter
+      Path recoveredEditsDir = WALSplitUtil
           .getRegionDirRecoveredEditsDir(regiondir);
       long maxSeqId = 1200;
       long minSeqId = 1000;

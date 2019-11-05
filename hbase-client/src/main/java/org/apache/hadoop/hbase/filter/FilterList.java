@@ -147,11 +147,6 @@ final public class FilterList extends FilterBase {
   }
 
   @Override
-  public boolean filterRowKey(byte[] rowKey, int offset, int length) throws IOException {
-    return filterListBase.filterRowKey(rowKey, offset, length);
-  }
-
-  @Override
   public boolean filterRowKey(Cell firstRowCell) throws IOException {
     return filterListBase.filterRowKey(firstRowCell);
   }
@@ -164,12 +159,6 @@ final public class FilterList extends FilterBase {
   @Override
   public Cell transformCell(Cell c) throws IOException {
     return filterListBase.transformCell(c);
-  }
-
-  @Override
-  @Deprecated
-  public ReturnCode filterKeyValue(final Cell c) throws IOException {
-    return filterCell(c);
   }
 
   @Override
@@ -277,17 +266,14 @@ final public class FilterList extends FilterBase {
   public String toString() {
     return this.filterListBase.toString();
   }
+
   @Override
   public boolean equals(Object obj) {
-    if (obj == null || (!(obj instanceof FilterList))) {
-      return false;
-    }
-    FilterList f = (FilterList) obj;
-    return this.areSerializedFieldsEqual(f);
+    return obj instanceof Filter && areSerializedFieldsEqual((Filter) obj);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(this.getOperator(), Arrays.hashCode(this.getFilters().toArray()));
+    return Objects.hash(getOperator(), getFilters());
   }
 }
